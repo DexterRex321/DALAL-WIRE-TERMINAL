@@ -4,22 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dalal Wire Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
+<script src="https://unpkg.com/lenis@1.1.20/dist/lenis.min.js"></script>
+
 </head>
 <body>
-<div id="boot-splash" style="position:fixed;inset:0;background:#060608;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Courier New',monospace;animation:bootFade .4s ease .8s both">
-  <div style="color:#ff6600;font-size:28px;font-weight:bold;letter-spacing:4px;margin-bottom:12px;animation:brandPulse 1s ease-in-out infinite">DALAL WIRE</div>
-  <div style="color:#333;font-size:12px;letter-spacing:2px;margin-bottom:20px">TERMINAL v2.0</div>
-  <div style="display:flex;gap:4px">
-    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out infinite"></div>
-    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out .15s infinite"></div>
-    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out .3s infinite"></div>
-  </div>
+<div id="boot-splash" style="position:fixed;inset:0;background:#0a0a0a;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;animation:bootFade .4s ease 1.2s both">
+  <div style="color:#ff6600;font-size:14px;font-weight:600;letter-spacing:0.2em;margin-bottom:8px;text-transform:uppercase">Bridge Dalal Wire</div>
+  <div style="color:#555550;font-size:9px;letter-spacing:0.12em;text-transform:uppercase">System Initialization . . .</div>
 </div>
 <style>
 @keyframes bootFade { to { opacity:0; pointer-events:none; } }
-@keyframes brandPulse { 0%,100%{text-shadow:0 0 14px rgba(255,102,0,.35)}50%{text-shadow:0 0 28px rgba(255,102,0,.7),0 0 50px rgba(255,102,0,.25)} }
-@keyframes dotPulse { 0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.7} }
 </style>
 <div id="bb">
   <div id="topbar">
@@ -84,20 +82,18 @@
       </div>
     </div>
 
-    <div id="content-area">
+    <div id="news-column">
       <div id="search-bar">
-        <input id="q-input" type="text" placeholder="Search stories — crude, SBI, Tata, FII..." list="story-ac" autocomplete="off" />
+        <input id="q-input" type="text" placeholder="Filter news — crude, SBI, Tata, FII..." list="story-ac" autocomplete="off" />
         <datalist id="story-ac">
           <option value="Nifty"></option><option value="Sensex"></option><option value="Bank Nifty"></option><option value="Reliance"></option>
           <option value="TCS"></option><option value="Infosys"></option><option value="HDFC Bank"></option><option value="SBI"></option>
           <option value="crude oil"></option><option value="FII"></option><option value="DII"></option><option value="RBI"></option>
           <option value="inflation"></option><option value="rupee"></option><option value="gold"></option><option value="IT sector"></option>
-          <option value="banking"></option><option value="pharma"></option><option value="auto"></option><option value="Adani"></option>
-          <option value="Tata Motors"></option><option value="Tata Steel"></option><option value="MCX"></option><option value="commodities"></option>
         </datalist>
         <button onclick="doSearch()">SEARCH</button>
       </div>
-      
+
       <div class="chips">
         <span class="chip active-chip" onclick="loadCategory('market')">MARKET</span>
         <span class="chip" onclick="loadCategory('banks')">BANKS</span>
@@ -106,33 +102,42 @@
         <span class="chip" onclick="loadCategory('stocks')">STOCKS</span>
         <span class="chip" onclick="loadCategory('global')">GLOBAL</span>
       </div>
-      <div id="news-area">
-        <div id="headlines">
-          <div class="ph" style="justify-content:space-between"><span class="pt" id="hl-label">MARKET</span><span style="display:flex;align-items:center;gap:8px"><span style="color:#444;font-size:13px" id="hl-count">—</span><span onclick="refreshNews()" title="Refresh news" style="color:#ff6600;cursor:pointer;font-size:14px;padding:2px 8px;border:1px solid #ff6600;border-radius:2px;background:#1a0a00">↻</span></span></div>
-          <div id="hl-list"></div>
-        </div>
 
-        <div id="right-panel">
-          <div id="rp-tabs">
-            <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
-            <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
-            <span class="rp-tab" data-rp="global" onclick="switchRP('global')" style="border-color:#534AB7;color:#7F77DD">GLOBAL</span>
-            <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')" style="border-color:#2D6B4F;color:#4CAF82">HEATMAP</span>
-            <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')" style="border-color:#4A3B8C;color:#8B7FD4">MF/ETF</span>
-            <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')" style="border-color:#735A13;color:#E6B84A">COMMODITIES</span>
-            <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')" style="border-color:#5A676E;color:#AAB6BD">LOCK-IN</span>
-                <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')" style="border-color:#534AB7;color:#8B7FD4">SENTIMENT</span>
-            <div id="rp-ticker-row">
-              <div style="position:relative">
-                <input id="rp-ticker" type="text" placeholder="Search ticker..." autocomplete="off"
-                  oninput="showTickerDropdown(this.value)"
-                  onkeydown="handleTickerKey(event)"
-                  onfocus="showTickerDropdown(this.value)"
-                  style="width:220px" />
-                <div id="ticker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#0d0d18;border:1px solid #ff6600;border-top:none;z-index:999;max-height:280px;overflow-y:auto;border-radius:0 0 4px 4px"></div>
-              </div>
-              <button onclick="applyTicker()">GO</button>
-            </div>
+      <div id="headlines">
+        <div class="ph" style="justify-content:space-between">
+          <span class="pt" id="hl-label">MARKET NEWS</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="color:var(--dim);font-size:10px;letter-spacing:0.1em" id="hl-count">—</span>
+            <span onclick="refreshNews()" title="Refresh news" style="color:var(--orange);cursor:pointer;font-size:12px;padding:2px 8px;border:1px solid var(--line2);background:var(--bg1)">↻</span>
+          </span>
+        </div>
+        <div id="hl-list"></div>
+      </div>
+    </div>
+
+    <div id="right-panel">
+      <div id="rp-tabs">
+        <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
+        <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
+        <span class="rp-tab" data-rp="global" onclick="switchRP('global')">GLOBAL</span>
+        <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')">HEATMAP</span>
+        <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')">MF/ETF</span>
+        <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
+        <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')">LOCK-IN</span>
+        <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')">SENTIMENT</span>
+      </div>
+
+      <div id="rp-ticker-row">
+        <div style="position:relative; flex:1">
+          <input id="rp-ticker" type="text" placeholder="TICKER FOCUS (e.g. RELIANCE)..." autocomplete="off"
+            oninput="showTickerDropdown(this.value)"
+            onkeydown="handleTickerKey(event)"
+            onfocus="showTickerDropdown(this.value)" />
+          <div id="ticker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--line2);border-top:none;z-index:999;max-height:280px;overflow-y:auto;border-radius:0"></div>
+        </div>
+        <button onclick="applyTicker()" style="border-radius:0;border:1px solid var(--line2);background:var(--bg2);color:var(--orange);font-weight:600">GO</button>
+      </div>
+
           </div>
 
           <div id="rp-story">
@@ -352,32 +357,34 @@
   </div>
 </div>
 <!-- FLOATING NAV WIDGET -->
-<div id="nav-widget" style="position:fixed;bottom:16px;left:16px;z-index:9999;font-family:'Courier New',monospace">
-  <div id="nav-pill" onclick="document.getElementById('nav-panel').classList.toggle('open')" style="cursor:pointer;background:#0d1120;border:1px solid rgba(255,102,0,.3);border-radius:20px;padding:6px 14px;font-size:10px;letter-spacing:.1em;color:#ff6600;display:flex;align-items:center;gap:6px;transition:all .2s;box-shadow:0 4px 20px rgba(0,0,0,.6)">
-    <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out infinite"></span>APP SWITCHER
+<div id="nav-widget" style="position:fixed;bottom:20px;left:20px;z-index:9999;font-family:var(--mono)">
+  <div id="nav-pill" onclick="document.getElementById('nav-panel').classList.toggle('open')" style="cursor:pointer;background:var(--bg2);border:1px solid var(--orange-d);border-radius:2px;padding:6px 12px;font-size:10px;letter-spacing:.12em;color:var(--orange);display:flex;align-items:center;gap:8px;transition:none;box-shadow:none">
+    <span style="display:inline-block;width:6px;height:6px;border-radius:0;background:var(--orange)"></span>APP SWITCHER
   </div>
-  <div id="nav-panel" style="display:none;position:absolute;bottom:calc(100% + 8px);left:0;background:#0d1120;border:1px solid rgba(255,255,255,.1);border-radius:8px;overflow:hidden;min-width:220px;box-shadow:0 8px 30px rgba(0,0,0,.7)">
-    <a href="/" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#c9a84c;font-size:10px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06);transition:background .15s">
+
+  <div id="nav-panel" style="display:none;position:absolute;bottom:calc(100% + 4px);left:0;background:var(--bg2);border:1px solid var(--line2);border-radius:2px;overflow:hidden;min-width:220px;box-shadow:none">
+    <a href="/" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--muted);font-size:10px;letter-spacing:.12em;border-bottom:1px solid var(--line);transition:none">
       <span style="font-size:14px">⬡</span>BRIDGE
     </a>
-    <a href="/terminal" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#ff6600;font-size:10px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(255,102,0,.06)">
-      <span style="font-size:14px">◈</span>DALAL WIRE <span style="margin-left:auto;color:#333;font-size:9px">● HERE</span>
+    <a href="/terminal" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--orange);font-size:10px;letter-spacing:.12em;border-bottom:1px solid var(--line);background:rgba(255,102,0,.04)">
+      <span style="font-size:14px">◈</span>DALAL WIRE <span style="margin-left:auto;color:var(--dim);font-size:9px">● HERE</span>
     </a>
-            <a href="https://finance.worldmonitor.app/?variant=finance&amp;preset=dalal" onclick="this.href = window.getWorldMonitorStandaloneUrl ? window.getWorldMonitorStandaloneUrl() : this.href" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#7fd3ff;font-size:10px;letter-spacing:.1em;transition:background .15s">
+    <a href="https://finance.worldmonitor.app/?variant=finance&amp;preset=dalal" onclick="this.href = window.getWorldMonitorStandaloneUrl ? window.getWorldMonitorStandaloneUrl() : this.href" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--blue);font-size:10px;letter-spacing:.12em;transition:none">
       <span style="font-size:14px">◎</span>WORLD MONITOR
     </a>
   </div>
+
 </div>
 <div id="focus-esc-hint" aria-hidden="true">ESC TO EXIT FOCUS</div>
 <style>
-  #nav-pill:hover{border-color:rgba(255,102,0,.6);transform:translateY(-2px)}
-  #nav-panel.open{display:block!important;animation:navSlideUp .2s ease}
-  #nav-panel a:hover{background:rgba(255,255,255,.04)}
-  @keyframes navSlideUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  #nav-pill:hover{border-color:var(--muted);color:var(--text)}
+  #nav-panel.open{display:block!important;}
+  #nav-panel a:hover{background:rgba(255,255,255,.03)}
 </style>
+
 <script>document.addEventListener('click',e=>{const p=document.getElementById('nav-panel'),w=document.getElementById('nav-widget');if(p&&!w.contains(e.target))p.classList.remove('open')})</script>
 
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="/app.js"></script>
+
 </body>
 </html>
