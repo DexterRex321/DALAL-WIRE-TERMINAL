@@ -12,12 +12,15 @@
 
 </head>
 <body>
-<div id="boot-splash" style="position:fixed;inset:0;background:#0a0a0a;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;animation:bootFade .4s ease 1.2s both">
-  <div style="color:#ff6600;font-size:14px;font-weight:600;letter-spacing:0.2em;margin-bottom:8px;text-transform:uppercase">Bridge Dalal Wire</div>
-  <div style="color:#555550;font-size:9px;letter-spacing:0.12em;text-transform:uppercase">System Initialization . . .</div>
+<div id="boot-splash" class="boot-splash">
+  <div class="boot-logo">Bridge Dalal Wire</div>
+  <div class="boot-meta">System Initialization . . .</div>
 </div>
 <style>
 @keyframes bootFade { to { opacity:0; pointer-events:none; } }
+.boot-splash { position:fixed;inset:0;background:#0a0a0a;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono);animation:bootFade .4s ease 1.2s both }
+.boot-logo { color:var(--orange);font-size:14px;font-weight:600;letter-spacing:0.2em;margin-bottom:8px;text-transform:uppercase }
+.boot-meta { color:var(--dim);font-size:9px;letter-spacing:0.12em;text-transform:uppercase }
 </style>
 <div id="bb">
   <div id="topbar">
@@ -60,7 +63,7 @@
         <span class="pt">Indices</span>
       </div>
       <div id="idx-list"></div>
-      <div class="ph" style="margin-top:0"><span class="pt">Macro</span><span style="color:#444;font-size:16px;margin-left:auto">India</span></div>
+      <div class="ph" style="margin-top:0"><span class="pt">Macro</span><span class="pt-sub">India</span></div>
       <div id="macro-list"></div>
       <div id="mini-macro-charts">
         <div class="mini-chart-card">
@@ -133,12 +136,10 @@
             oninput="showTickerDropdown(this.value)"
             onkeydown="handleTickerKey(event)"
             onfocus="showTickerDropdown(this.value)" />
-          <div id="ticker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--line2);border-top:none;z-index:999;max-height:280px;overflow-y:auto;border-radius:0"></div>
+          <div id="ticker-dropdown"></div>
         </div>
-        <button onclick="applyTicker()" style="border-radius:0;border:1px solid var(--line2);background:var(--bg2);color:var(--orange);font-weight:600">GO</button>
+        <button onclick="applyTicker()">GO</button>
       </div>
-
-          </div>
 
           <div id="rp-story">
             <div id="state-view-root"></div>
@@ -157,50 +158,16 @@
           </div>
 
           <div id="rp-advice">
-            <div id="advice-ticker-label" style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px;margin-bottom:10px">LIVE SIGNAL — NIFTY 50</div>
-            <div class="adv-card">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-                <span style="color:#fff;font-size:18px;font-weight:bold" id="adv-stance-label">Market Stance</span>
-                <span id="adv-stance-badge" style="background:#101626;color:#9bb2c7;border:1px solid #273448;font-size:16px;padding:2px 8px;border-radius:2px;font-weight:bold">WAITING</span>
+            <div id="advice-ticker-label">LIVE SIGNAL — NIFTY 50</div>
+            <div id="advice-content">
+              <div class="adv-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                  <span id="adv-stance-label">Market Stance</span>
+                  <span id="adv-stance-badge">WAITING</span>
+                </div>
+                <div id="adv-stance-text">Waiting for live signal data. Price, levels, and flow context will populate from the Dalal Wire APIs.</div>
               </div>
-              <div id="adv-stance-text" style="color:#a09888;font-size:18px;line-height:1.8">Waiting for live signal data. Price, levels, and flow context will populate from the Dalal Wire APIs once the feed responds.</div>
-            </div>
-            <div class="adv-section">KEY LEVELS</div>
-            <div id="adv-key-levels" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;overflow:hidden;margin-bottom:10px">
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #1a1a2e"><div style="padding:5px 8px;color:#444;font-size:16px">LEVEL</div><div style="padding:5px 8px;color:#444;font-size:16px;text-align:center">VALUE</div><div style="padding:5px 8px;color:#444;font-size:16px;text-align:right">SIGNAL</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Strong Resist.</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">24,166</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff4444">SELL RALLY</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Resistance</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">23,777</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff9900">WATCH</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18;background:#0d0d1a"><div style="padding:5px 8px;color:#aaa;font-size:17px">▶ Current</div><div style="padding:5px 8px;color:#fff;font-size:18px;text-align:center;font-weight:bold">23,151</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#aaa">HERE</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Support 1</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">22,700</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#00cc66">BOUNCE</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Support 2</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">22,400</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#00cc66">STRONG</div></div>
-              <div style="display:grid;grid-template-columns:1fr 80px 90px"><div style="padding:5px 8px;color:#888;font-size:17px">Bear Target</div><div style="padding:5px 8px;color:#ff4444;font-size:17px;text-align:center;font-weight:bold">21,743</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff4444">52W LOW</div></div>
-            </div>
-            <div class="adv-section">BROKER CALLS</div>
-            <div id="adv-broker-calls" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;margin-bottom:10px">
-              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">5paisa Research</div><div style="color:#666;font-size:17px;margin-top:2px">Sell rallies 23,500–23,777. Keep 30–40% cash.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">SELL RALLY</span></div>
-              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Kotak Securities</div><div style="color:#666;font-size:17px;margin-top:2px">Accumulate IT &amp; Pharma. Nifty P/E at 19.2x reasonable.</div></div><span style="background:#1a1000;color:#ff9900;border:1px solid #2a1800;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">SELECTIVE</span></div>
-              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Morgan Stanley</div><div style="color:#666;font-size:17px;margin-top:2px">Downgraded India to Underweight. Crude + FII risk.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">UNDERWEIGHT</span></div>
-              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">CLSA</div><div style="color:#666;font-size:17px;margin-top:2px">Overweight India long-term. Volatility = buy quality.</div></div><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">OVERWEIGHT</span></div>
-              <div style="padding:8px 10px;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Jefferies India</div><div style="color:#666;font-size:17px;margin-top:2px">Wait for VIX below 18 and crude below $100.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">CAUTIOUS</span></div>
-            </div>
-            <div class="adv-section">SECTOR ADVICE</div>
-            <div id="adv-sector-advice" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;margin-bottom:10px">
-              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">IT</span><span style="color:#888;font-size:17px">Rupee tailwind. Buy Infy, TCS, Wipro on dips.</span><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:1px 6px;border-radius:2px">BUY</span></div>
-              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">PHARMA</span><span style="color:#888;font-size:17px">Defensive. Sun Pharma, Cipla, Dr Reddy's.</span><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:1px 6px;border-radius:2px">BUY</span></div>
-              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">FMCG</span><span style="color:#888;font-size:17px">Stable. HUL, Marico hold for stability.</span><span style="background:#1a1000;color:#ff9900;border:1px solid #2a1800;font-size:16px;padding:1px 6px;border-radius:2px">HOLD</span></div>
-              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">BANKS</span><span style="color:#888;font-size:17px">Wait for VIX cool-off. Trend still down.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">WAIT</span></div>
-              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">AUTO</span><span style="color:#888;font-size:17px">Crude kills margins. Avoid until oil &lt;$95.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">AVOID</span></div>
-              <div style="padding:6px 10px;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">METAL</span><span style="color:#888;font-size:17px">China slowdown + energy costs. Stay out.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">AVOID</span></div>
-            </div>
-            <div class="adv-section">RISK WATCHLIST</div>
-            <div id="adv-risk-watchlist" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;padding:10px">
-              <div style="display:flex;flex-direction:column;gap:6px">
-                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">Crude above $100 — inflation + CAD risk</span></div>
-                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">FII selling beyond 15 sessions → Nifty 22,000</span></div>
-                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">RBI April MPC (Apr 7–9) — hawkish surprise risk</span></div>
-                <div style="display:flex;gap:8px"><span style="color:#ff9900;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">March expiry Mar 20 — hedge positions now</span></div>
-                <div style="display:flex;gap:8px"><span style="color:#00cc66;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">US-Iran ceasefire → 3–5% relief rally possible</span></div>
-              </div>
+              <div id="advice-dynamic-content"></div>
             </div>
           </div>
 
@@ -343,8 +310,6 @@
   <div style="padding:20px;text-align:center;color:#444;font-size:13px">Loading sentiment data...</div>
 </div>
 
-        </div>
-      </div>
     </div>
   </div>
 

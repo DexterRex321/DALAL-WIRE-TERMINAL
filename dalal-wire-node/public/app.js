@@ -473,33 +473,102 @@ function renderApp() {
   emptyEl.style.display = 'none';
   bodyEl.style.display = 'none';
   root.classList.toggle('state-view-detail', appState.view !== 'indices');
-  renderIndices();
+  renderPulse();
   renderExplorerModal();
 }
 
-function renderIndices() {
+function renderPulse() {
   const root = getExplorerRoot(); if (!root) return;
-  const cards = Object.entries(INDEX_VIEW_CONFIG).map(([indexKey, index]) => {
-    const summary = getIndexQuoteSummary(indexKey);
-    return `<button class="state-card state-card-index ${appState.selectedIndex === indexKey ? 'is-active' : ''} ${summary.pending ? 'is-loading' : ''}" type="button" onclick="selectIndexView('${indexKey}')">
-      <div class="state-card-title">${escapeHtml(index.label)}</div>
-      <div class="state-card-meta">
-        <span class="state-price ${summary.pending ? 'state-placeholder-text' : ''}">${summary.price}</span>
-        <span class="state-change ${summary.change.cls} ${summary.pending ? 'state-placeholder-text' : ''}">${summary.change.txt}</span>
+  
+  // Market Pulse replaces the redundant indices list
+  let html = `
+    <div class="pulse-container">
+      <div class="pulse-header">
+        <div class="pulse-title">MARKET PULSE</div>
+        <div class="pulse-subtitle">Live intra-day snapshot and trend analysis</div>
       </div>
-      <div class="state-card-minor">${summary.pending ? 'Loading fast quote' : (summary.stale ? 'Fallback quote' : 'Live quote')}</div>
-    </button>`;
-  }).join('');
-  root.innerHTML = `<div class="${getStateShellClass()}">
-    <div class="state-shell-head">
-      <div>
-        <div class="state-eyebrow">LEVEL 1</div>
-        <div class="state-title">Indices</div>
+      
+      <div class="pulse-grid">
+        <div class="pulse-card">
+          <div class="pulse-card-label">INTRA-DAY BIAS</div>
+          <div id="pulse-bias" class="pulse-card-value">NEUTRAL</div>
+        </div>
+        <div class="pulse-card">
+          <div class="pulse-card-label">VOLATILITY (VIX)</div>
+          <div id="pulse-vix" class="pulse-card-value">--</div>
+        </div>
+        <div class="pulse-card">
+          <div class="pulse-card-label">ADV/DEC RATIO</div>
+          <div id="pulse-breadth" class="pulse-card-value">--</div>
+        </div>
       </div>
-      <div class="state-shell-copy">${sectionLoadState.indices === 'loading' ? 'Loading fast quotes first. Details and secondary data hydrate independently.' : 'Minimal market view. Select an index to move into constituents, weights, and sectors.'}</div>
+
+      <div class="pulse-section-title">GLOBAL CONTEXT</div>
+      <div id="pulse-global-list" class="pulse-mini-list">
+        <div class="pulse-loading">Hydrating global feeds...</div>
+      </div>
+
+      <div class="pulse-footer">
+        Select a news story for deep-dive analysis or use the tabs above for specialized data modules.
+      </div>
     </div>
-    <div class="state-grid">${cards}</div>
-  </div>`;
+  `;
+  root.innerHTML = html;
+  
+  // Trigger hydration of pulse data
+  hydratePulseData();
+}
+
+async function hydratePulseData() {
+  // Sync with global and finance data
+  const biasEl = document.getElementById('pulse-bias');
+  const vixEl = document.getElementById('pulse-vix');
+  const breadthEl = document.getElementById('pulse-breadth');
+  const globalList = document.getElementById('pulse-global-list');
+
+  // Breadth from existing state
+  if (breadthEl && dashStore?.quotes?.['NIFTY:NSE']) {
+    const q = dashStore.quotes['NIFTY:NSE'];
+    if (q.advances != null) {
+      breadthEl.textContent = `${q.advances} : ${q.declines}`;
+      breadthEl.style.color = q.advances > q.declines ? 'var(--green)' : 'var(--red)';
+    }
+  }
+
+  // VIX from finance data
+  if (vixEl) {
+    const v = document.getElementById('s-vix')?.textContent || '--';
+    vixEl.textContent = v;
+  }
+
+  // Global small items
+  if (globalList) {
+    if (!globalData) {
+      if (!globalFetching) fetchGlobal();
+      globalList.innerHTML = '<div class="pulse-loading">Fetching global feeds...</div>';
+      return;
+    }
+    const items = ['DXY', 'US10Y', 'GOLD', 'CRUDE', 'BTCUSD'];
+    let gHtml = '';
+    items.forEach(k => {
+      const d = globalData[k];
+      if (d) {
+        const pct = d.percent_change || 0;
+        const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : '';
+        const sign = pct >= 0 ? '+' : '';
+        gHtml += `<div class="pulse-mini-item">
+          <span>${k}</span>
+          <b class="${cls}">${d.price?.toFixed(2)} (${sign}${pct.toFixed(2)}%)</b>
+        </div>`;
+      }
+    });
+    globalList.innerHTML = gHtml || '<div class="pulse-empty">No global data</div>';
+  }
+}
+
+function renderIndices() {
+  // Keeping renderIndices for the left sidebar or other hidden uses if any
+  // But root is now managed by renderPulse in the default state
 }
 
 function buildIndexModalMarkup() {
@@ -883,6 +952,8 @@ function switchRP(tab, options = {}) {
   const activePanel = document.getElementById(panelMap[tab]);
   if (activePanel) activePanel.style.display = 'block';
 
+  if (tab === 'detail') hydratePulseData();
+
   // FIX: Global tab now always fetches from /api/global directly (uppercase keys)
   if (tab === 'global') fetchGlobal();
   if (tab === 'heatmap') fetchHeatmap();
@@ -906,8 +977,9 @@ async function fetchGlobal() {
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
     const glUp = document.getElementById('gl-updated');
     if (glUp) glUp.textContent = 'Updated ' + now + ' IST';
-    // Also update the bridge global metric now that we have proper data
+    // Also update the bridge and pulse global metrics now that we have proper data
     refreshFinanceBridge();
+    if (currentRP === 'detail') hydratePulseData();
   } catch (e) {
     const el = document.getElementById('gl-content');
     if (el) el.innerHTML = `<div style="color:#ff4444;font-size:13px;padding:20px">Error: ${e.message}</div>`;
@@ -941,8 +1013,59 @@ async function updateAdviceForTicker(t) {
     const d = await res.json();
     const cls = d?.cls || 'neutral'; const stance = d?.stance || 'NEUTRAL'; const m = d?.metrics || {};
     const hasRealData = Number(m.price || 0) > 0;
-    if (badge) { badge.textContent = stance; badge.style.background = cls === 'bull' ? '#003311' : cls === 'bear' ? '#1a0000' : '#1a1000'; badge.style.color = cls === 'bull' ? '#00cc66' : cls === 'bear' ? '#ff4444' : '#ff9900'; badge.style.border = '1px solid ' + (cls === 'bull' ? '#004d1a' : cls === 'bear' ? '#330000' : '#2a1800'); }
-    if (text && hasRealData) { const l = d?.levels || {}; text.textContent = `${d?.message || ''} ${key} Price ${Number(m.price).toFixed(2)}, VIX ${Number(m.vix).toFixed(2)}, Crude ${Number(m.crude).toFixed(2)}. Support ${l.support ?? '--'}, Resistance ${l.resistance ?? '--'}.`; }
+    if (badge) { badge.textContent = stance; badge.className = 'status-badge ' + (cls === 'bull' ? 'status-up' : cls === 'bear' ? 'status-dn' : 'status-neutral'); badge.style.cssText = ''; }
+    if (text && hasRealData) { 
+        const l = d?.levels || {}; 
+        text.textContent = `${d?.message || ''} ${key} at ${Number(m.price).toFixed(2)}.`;
+        
+        // Render dynamic advice content (Levels, Calls, etc.)
+        const dynamic = document.getElementById('advice-dynamic-content');
+        if (dynamic) {
+            let html = '';
+            
+            // Levels Section
+            if (l.support || l.resistance) {
+                html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">KEY TECHNICAL LEVELS</div>
+                <div class="adv-levels-grid" style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:20px;">
+                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 2</span>
+                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance2 || '--'}</b>
+                        <span class="status-badge status-dn" style="font-size:8px;">SELL</span>
+                    </div>
+                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 1</span>
+                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance || '--'}</b>
+                        <span class="status-badge status-neutral" style="font-size:8px;">WATCH</span>
+                    </div>
+                    <div style="background:var(--bg1);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:9px;color:var(--orange);font-weight:700;">CURRENT SPOT</span>
+                        <b style="font-size:16px;color:var(--text);font-variant-numeric:tabular-nums;">${Number(m.price).toFixed(0)}</b>
+                        <span class="status-badge status-neutral" style="font-size:8px;background:var(--line2);">HERE</span>
+                    </div>
+                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 1</span>
+                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support || '--'}</b>
+                        <span class="status-badge status-up" style="font-size:8px;">BUY</span>
+                    </div>
+                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 2</span>
+                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support2 || '--'}</b>
+                        <span class="status-badge status-up" style="font-size:8px;">STRONG</span>
+                    </div>
+                </div>`;
+            }
+
+            // Broker Calls
+            html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">ANALYST CONTEXT</div>
+            <div style="display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);">
+                <div style="background:var(--bg2);padding:14px;">
+                    <div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:6px;text-transform:uppercase;">Institutional Intelligence</div>
+                    <p style="font-size:12px;color:var(--text);line-height:1.5;margin:0;">${stance === 'BULLISH' ? 'Accumulate on dips. Institutional flow indicates strong underlying demand near support zones.' : stance === 'BEARISH' ? 'Maintain cautious stance. Overhead supply likely to cap rallies. Hedge long positions.' : 'Market in price discovery. Wait for consolidation breaks before committing size.'}</p>
+                </div>
+            </div>`;
+            dynamic.innerHTML = html;
+        }
+    }
     else if (text) { _patchAdviceFromDOM(key); }
   } catch { _patchAdviceFromDOM(key); }
 }
@@ -978,9 +1101,9 @@ function marketBiasColor(bias) {
 }
 
 function overnightImpactColor(impact) {
-  if (impact === 'POSITIVE') return '#6fc28a';
-  if (impact === 'NEGATIVE') return '#d27979';
-  return '#a2a2a2';
+  if (impact === 'POSITIVE') return 'var(--text)';
+  if (impact === 'NEGATIVE') return 'var(--dim)';
+  return 'var(--muted)';
 }
 
 // Draw semi-circle gauge on canvas
@@ -1009,13 +1132,13 @@ function drawFngGauge(canvasId, score, color) {
   });
   // Active
   ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, scoreAngle);
-  ctx.strokeStyle = color; ctx.lineWidth = size * 0.072; ctx.lineCap = 'round';
-  ctx.shadowBlur = 14; ctx.shadowColor = color; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'var(--text)'; ctx.lineWidth = size * 0.072; ctx.lineCap = 'round';
+  ctx.stroke();
   // Needle
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(scoreAngle) * r * .82, cy + Math.sin(scoreAngle) * r * .82);
-  ctx.strokeStyle = '#dde1ea'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.stroke();
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.stroke();
   // Center dot
-  ctx.beginPath(); ctx.arc(cx, cy, size * .035, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, size * .035, 0, Math.PI * 2); ctx.fillStyle = '#e0e0e0'; ctx.fill();
 }
 
 // Draw 30-day sparkline history
@@ -1100,41 +1223,48 @@ function renderFearGreed() {
 
   panel.innerHTML = `
   <div style="padding:16px; font-family:var(--mono);">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:8px;">
-      <div style="color:var(--orange);font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;">Market Sentiment Dual-Feed</div>
-      <span style="color:var(--dim);font-size:9px;">UPDATED ${now}</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:10px;">
+      <div style="color:var(--orange);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Sentiment Dual-Feed</div>
+      <span style="color:var(--dim);font-size:9px;text-transform:uppercase;">LIVE · ${now}</span>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);margin-bottom:16px;border:1px solid var(--line);">
-      <div style="background:var(--bg2);padding:14px;text-align:center;">
-        <div style="font-size:9px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.1em">INDIA COMPOSITE</div>
-        <canvas id="fng-gauge-india" style="width:140px;height:90px;margin:0 auto"></canvas>
-        <div style="font-size:24px;font-weight:600;color:${ic};line-height:1;margin-top:8px">${is_}</div>
-        <div style="font-size:9px;color:${ic};margin-top:4px;font-weight:500;">${il.toUpperCase()}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);margin-bottom:20px;border:1px solid var(--line);">
+      <div style="background:var(--bg2);padding:20px 10px;text-align:center;">
+        <div style="font-size:9px;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">INDIA COMPOSITE</div>
+        <div style="position:relative; width:140px; height:80px; margin:0 auto;">
+           <canvas id="fng-gauge-india" style="width:140px;height:80px;"></canvas>
+           <div style="position:absolute; bottom:0; left:0; right:0; font-size:24px; font-weight:800; color:var(--text);">${is_}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:8px;font-weight:700;letter-spacing:0.5px;">${il.toUpperCase()}</div>
       </div>
-      <div style="background:var(--bg2);padding:14px;text-align:center;">
-        <div style="font-size:9px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.1em">GLOBAL US (CNN)</div>
-        <canvas id="fng-gauge-global" style="width:140px;height:90px;margin:0 auto"></canvas>
-        <div style="font-size:24px;font-weight:600;color:${gc};line-height:1;margin-top:8px">${gs}</div>
-        <div style="font-size:9px;color:${gc};margin-top:4px;font-weight:500;">${gl.toUpperCase()}</div>
+      <div style="background:var(--bg2);padding:20px 10px;text-align:center;">
+        <div style="font-size:9px;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">GLOBAL US (CNN)</div>
+        <div style="position:relative; width:140px; height:80px; margin:0 auto;">
+           <canvas id="fng-gauge-global" style="width:140px;height:80px;"></canvas>
+           <div style="position:absolute; bottom:0; left:0; right:0; font-size:24px; font-weight:800; color:var(--text);">${gs}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:8px;font-weight:700;letter-spacing:0.5px;">${gl.toUpperCase()}</div>
       </div>
     </div>
 
     <div style="border:1px solid var(--line);background:var(--bg1);">
-      <div style="font-size:9px;color:var(--muted);background:var(--bg2);padding:6px 10px;text-transform:uppercase;border-bottom:1px solid var(--line)">India Drivers</div>
-      <div style="padding:10px;display:flex;flex-direction:column;gap:8px;">
+      <div style="font-size:10px;color:var(--muted);background:var(--bg2);padding:10px;text-transform:uppercase;border-bottom:1px solid var(--line);font-weight:700;letter-spacing:1px;">Market Drivers</div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
         ${india?.components ? Object.entries(india.components).map(([k, comp]) => {
-          const val = Number(comp.value); const col = val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--muted)';
-          return `<div style="display:flex;justify-content:space-between;font-size:11px;"><span style="color:var(--muted)">${comp.label.toUpperCase()}</span><b style="color:${col}">${val.toFixed(2)}</b></div>`;
-        }).join('') : `<div style="color:var(--dim);font-size:10px">Awaiting data...</div>`}
+          const val = Number(comp.value); const cls = val > 0 ? 'status-up' : val < 0 ? 'status-dn' : 'status-neutral';
+          return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;">
+            <span style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${comp.label}</span>
+            <div class="status-badge ${cls}" style="font-size:9px;font-weight:700;min-width:60px;text-align:right;">${val >= 0 ? '+' : ''}${val.toFixed(2)}</div>
+          </div>`;
+        }).join('') : `<div style="color:var(--dim);font-size:10px;text-align:center;padding:20px;">Awaiting driver telemetry...</div>`}
       </div>
     </div>
   </div>`;
 
-  requestAnimationFrame(() => {
+  setTimeout(() => {
     if (global) drawFngGauge('fng-gauge-global', global.score, gc);
     if (india) drawFngGauge('fng-gauge-india', india.score, ic);
-  });
+  }, 50);
 }
 
 
@@ -1383,25 +1513,30 @@ function renderGlobal() {
   ];
 
   let html = '<div style="padding:16px; font-family:var(--mono);">';
-  groups.forEach((region, ri) => {
+  groups.forEach((region) => {
     const items = region.keys.map(k => globalData[k]).filter(Boolean);
     if (!items.length) return;
-    html += `<div style="margin-bottom:16px;">
-      <div style="border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:10px;font-size:10px;color:var(--orange);font-weight:600;letter-spacing:0.05em">${region.label.toUpperCase()}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
+          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${region.label}</span>
+          <span style="font-size:9px;color:var(--dim);">REAL-TIME FEED</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:1px;background:var(--line);border:1px solid var(--line);">`;
     items.forEach(item => {
       const pct = parseFloat(item.percent_change || 0); const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : 'flat';
-      const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '—'; const sign = pct >= 0 ? '+' : '';
-      html += `<div style="background:var(--bg2);padding:10px;">
-        <div style="font-size:9px;color:var(--muted);margin-bottom:4px">${item.label.toUpperCase()}</div>
-        <div style="font-size:18px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums">${parseFloat(item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
-        <div class="${cls}" style="font-size:10px;margin-top:2px;font-weight:500;">${arrow} ${sign}${pct.toFixed(2)}%</div>
-      </div>`;
+      const sign = pct >= 0 ? '+' : '';
+      html += `
+        <div style="background:var(--bg2);padding:12px;display:flex;flex-direction:column;gap:4px;">
+          <div style="font-size:10px;color:var(--muted);font-weight:600;">${item.label.toUpperCase()}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${parseFloat(item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
+          <div class="${cls}" style="font-size:10px;font-weight:700;">${sign}${pct.toFixed(2)}%</div>
+        </div>`;
     });
     html += `</div></div>`;
   });
-  animateCollection('#gl-content .gl-region', { y: 14, stagger: 0.06, duration: 0.34 });
-  animateCollection('#gl-content .gl-cell', { y: 10, stagger: 0.02, duration: 0.26, delay: 0.08 });
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 setInterval(() => { if (currentRP === 'global') { fetchGlobal(); } }, 60000);
@@ -1434,7 +1569,13 @@ let heatmapData = null; let heatmapSet = 'nifty';
 async function fetchHeatmap() { const el = document.getElementById('heatmap-content'); if (!el) return; heatmapSet = document.getElementById('hm-set')?.value || 'nifty'; if (heatmapData) { renderHeatmap(); return; } el.innerHTML = '<div style="color:#4CAF82;text-align:center;padding:40px;font-size:14px">Loading heatmap...</div>'; try { const res = await fetch(`/api/heatmap?set=${encodeURIComponent(heatmapSet)}`); heatmapData = await res.json(); renderHeatmap(); if (Array.isArray(heatmapData) && heatmapData.length) { const adv = heatmapData.filter(s => (s.pct || 0) > 0).length; const dec = heatmapData.filter(s => (s.pct || 0) < 0).length; renderBreadthBar(adv, dec); } } catch (e) { el.innerHTML = `<div style="color:#ff4444;padding:20px">Error: ${e.message}</div>`; } }
 function forceHeatmap() { heatmapData = null; fetchHeatmap(); }
 function onHeatmapSetChange() { heatmapData = null; fetchHeatmap(); }
-function heatColor(pct) { if (pct > 2) return { bg: '#006633', fg: '#00ff88' }; if (pct > 0) return { bg: '#004422', fg: '#00cc55' }; if (pct === 0) return { bg: '#1a1a2e', fg: '#666' }; if (pct > -2) return { bg: '#4d0000', fg: '#ff6666' }; return { bg: '#800000', fg: '#ff3333' }; }
+function heatColor(pct) {
+  if (pct > 2) return { bg: '#2a2a2a', fg: '#ffffff', border: '#444' };
+  if (pct > 0) return { bg: '#1f1f1f', fg: '#e0e0e0', border: '#333' };
+  if (pct === 0) return { bg: '#121212', fg: '#888', border: '#222' };
+  if (pct > -2) return { bg: '#121212', fg: '#888', border: '#222' };
+  return { bg: '#0a0a0a', fg: '#666', border: '#1a1a1a' };
+}
 
 let dwTooltip = null;
 function ensureTooltip() { if (dwTooltip) return dwTooltip; const el = document.createElement('div'); el.className = 'dw-tooltip'; el.id = 'dw-tooltip'; document.body.appendChild(el); dwTooltip = el; return el; }
@@ -1445,7 +1586,7 @@ let lastRenderedHeatmapParams = '';
 function renderHeatmap() {
   const el = document.getElementById('heatmap-content'); if (!el || !heatmapData) return;
   const data = Array.isArray(heatmapData) ? heatmapData : (heatmapData.nifty || heatmapData.universe || heatmapData.indices || []);
-  if (!Array.isArray(data) || !data.length) { el.innerHTML = '<div style="color:var(--muted);padding:20px;font-family:var(--mono);">Heatmap data unavailable for this universe.</div>'; return; }
+  if (!Array.isArray(data) || !data.length) { el.innerHTML = '<div style="color:var(--muted);padding:24px;font-family:var(--mono);text-align:center;">UNIVERSAL DATA UNAVAILABLE</div>'; return; }
 
   const groupBy = document.getElementById('hm-group')?.value || 'sector'; 
   const setName = document.getElementById('hm-set')?.value || heatmapSet || 'nifty'; 
@@ -1462,7 +1603,7 @@ function renderHeatmap() {
   if (metaEl) { 
     const up = filtered.filter(s => s.pct > 0).length; 
     const dn = filtered.filter(s => s.pct < 0).length; 
-    metaEl.textContent = `${setName.toUpperCase()} UNIVERSE · ${filtered.length} ITEMS · ${up} UP · ${dn} DOWN`; 
+    metaEl.textContent = `${setName.toUpperCase()} · ${filtered.length} ITEMS · ${up} UP · ${dn} DOWN`; 
   }
 
   let html = '<div style="padding:16px; font-family:var(--mono);">';
@@ -1473,30 +1614,30 @@ function renderHeatmap() {
       const avg = stocks.reduce((acc, x) => acc + (x.pct || 0), 0) / Math.max(1, stocks.length); 
       const avgSign = avg >= 0 ? '+' : ''; 
       html += `<div style="margin-bottom:16px;">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:10px;font-size:10px;">
-          <span style="color:var(--orange);font-weight:600;letter-spacing:0.05em">${sector.toUpperCase()} <span style="color:var(--dim)">(${stocks.length})</span></span>
-          <span style="color:${avg >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:600">${avgSign}${avg.toFixed(2)}%</span>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
+          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${sector}</span>
+          <span style="font-size:10px;font-weight:700;color:${avg >= 0 ? 'var(--green)' : 'var(--red)'}">${avgSign}${avg.toFixed(2)}%</span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`; 
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`; 
       stocks.forEach(s => { 
-        const { bg, fg } = heatColor(s.pct); 
-        const sign = s.pct >= 0 ? '+' : ''; 
-        html += `<div style="background:${bg};color:${fg};padding:12px 6px;text-align:center;">
-          <div style="font-size:12px;font-weight:600;">${s.sym}</div>
-          <div style="font-size:10px;opacity:0.9;margin-top:2px;">${sign}${(s.pct || 0).toFixed(1)}%</div>
+        const pct = s.pct || 0;
+        const color = pct > 1.5 ? '#00cc66' : pct > 0 ? '#007a3d' : pct < -1.5 ? '#ff4444' : pct < 0 ? '#8a2626' : 'var(--muted)';
+        html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};">
+          <div style="font-size:12px;font-weight:700;">${s.sym}</div>
+          <div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div>
         </div>`; 
       }); 
       html += `</div></div>`; 
     }); 
   } else {
-    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`;
     filtered.forEach(s => {
-      const { bg, fg } = heatColor(s.pct);
-      const sign = s.pct >= 0 ? '+' : '';
-      html += `<div style="background:${bg};color:${fg};padding:12px 6px;text-align:center;">
-        <div style="font-size:12px;font-weight:600;">${s.sym}</div>
-        <div style="font-size:10px;opacity:0.9;margin-top:2px;">${sign}${(s.pct || 0).toFixed(1)}%</div>
-      </div>`;
+      const pct = s.pct || 0;
+      const color = pct > 0 ? 'var(--green)' : pct < 0 ? 'var(--red)' : 'var(--muted)';
+      html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};">
+          <div style="font-size:12px;font-weight:700;">${s.sym}</div>
+          <div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div>
+        </div>`;
     });
     html += `</div>`;
   }
@@ -1601,15 +1742,67 @@ function renderMFCardItem(m, i, kind) {
 }
 
 function renderMFCards(el, items, headerTxt) {
-  if (!items.length) { el.innerHTML = '<div style="color:#333;padding:20px;text-align:center">No matches</div>'; return; }
-  const kind = mfTab === 'etf' ? 'ETF' : 'MF'; const cntEl = document.getElementById('mf-count'); if (cntEl) { cntEl.textContent = headerTxt || items.length + ' FUNDS'; cntEl.style.color = '#8B7FD4'; setTimeout(() => { cntEl.style.color = ''; }, 600); }
+  if (!items.length) { el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;">No matching schemes found</div>'; return; }
+  const kind = mfTab === 'etf' ? 'ETF' : 'MF'; 
+  const cntEl = document.getElementById('mf-count'); 
+  if (cntEl) cntEl.textContent = headerTxt || items.length + ' FUNDS';
+
+  let html = '<div style="padding:16px; font-family:var(--mono);">';
+  
   if (mfView === 'list') {
-    let html = '<div class="mf-list-wrap"><div class="mf-list-hdr"><span>NAME</span><span style="text-align:right">NAV</span><span style="text-align:right">1D</span><span style="text-align:right">1Y</span><span style="text-align:right">3Y CAGR</span><span style="text-align:right">5Y CAGR</span></div>';
-    items.forEach((m, i) => { const cls1d = m.pct > 0 ? 'up' : m.pct < 0 ? 'dn' : ''; const sign = m.pct >= 0 ? '+' : ''; const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0); const isFoF = m.isFoF || (m.cat || '').toLowerCase().includes('fof'); const fofTag = isFoF ? '<span class="mf-fof-tag">FoF</span>' : ''; html += '<div class="mf-list-row mf-enter" style="animation-delay:' + Math.min(200, i * 8) + 'ms"><div><div class="mf-list-name">' + m.label + fofTag + '</div><div class="mf-list-sub">' + (m.amc || '') + ' · ' + (m.cat || m.type || '') + '</div></div><div class="mf-list-num">₹' + (navVal ? navVal.toFixed(2) : '--') + '</div><div class="mf-list-num ' + cls1d + '">' + sign + m.pct.toFixed(2) + '%</div><div class="mf-list-num" style="color:' + retColor(m.ret1y) + '">' + (m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—') + '</div><div class="mf-list-num" style="color:' + retColor(m.cagr3y) + '">' + (m.cagr3y != null ? (m.cagr3y >= 0 ? '+' : '') + m.cagr3y.toFixed(1) + '%' : '—') + '</div><div class="mf-list-num" style="color:' + retColor(m.cagr5y) + '">' + (m.cagr5y != null ? (m.cagr5y >= 0 ? '+' : '') + m.cagr5y.toFixed(1) + '%' : '—') + '</div></div>'; });
-    html += '</div>'; el.innerHTML = html;
-  } else { let html = '<div class="mf-grid">'; items.forEach((m, i) => { html += renderMFCardItem(m, i, kind); }); html += '</div>'; el.innerHTML = html; }
-  requestAnimationFrame(() => { document.querySelectorAll('.mf-ret-fill').forEach(bar => { const w = bar.style.width; bar.style.width = '0'; setTimeout(() => { bar.style.width = w; }, 80); }); });
-  attachMFTooltips(el, kind);
+    html += `
+      <div style="border:1px solid var(--line);background:var(--bg1);">
+        <div style="display:grid;grid-template-columns:2fr 1fr 1.2fr;background:var(--bg2);padding:8px 12px;font-size:9px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);letter-spacing:1px;">
+          <span>SCHEME</span>
+          <span style="text-align:right">NAV/PRICE</span>
+          <span style="text-align:right">1Y RET</span>
+        </div>`;
+    items.forEach((m, i) => {
+      const pct = m.pct || 0; const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : '';
+      const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0);
+      html += `
+        <div style="display:grid;grid-template-columns:2fr 1fr 1.2fr;padding:12px;border-bottom:1px solid var(--line);align-items:center;">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="font-size:11px;font-weight:700;color:var(--text);">${m.label}</div>
+            <div style="font-size:9px;color:var(--dim);text-transform:uppercase;">${m.amc || ''} · ${m.cat || m.type || ''}</div>
+          </div>
+          <div style="text-align:right;font-size:13px;font-weight:700;color:var(--text);">₹${navVal.toFixed(2)}</div>
+          <div style="text-align:right;font-size:11px;font-weight:700;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</div>
+        </div>`;
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;">';
+    items.forEach((m, i) => {
+      const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0);
+      const isFoF = m.isFoF || (m.cat || '').toLowerCase().includes('fof');
+      html += `
+        <div style="background:var(--bg2);border:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;position:relative;overflow:hidden;">
+          ${isFoF ? '<div style="position:absolute;top:0;right:0;background:var(--orange);color:#000;font-size:8px;font-weight:900;padding:2px 6px;text-transform:uppercase;">FoF</div>' : ''}
+          <div>
+            <div style="font-size:9px;color:var(--orange);font-weight:700;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">${m.amc || 'Mutual Fund'}</div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);line-height:1.3;">${m.label}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);">
+            <div style="background:var(--bg1);padding:10px;">
+              <span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">NAV</span>
+              <b style="font-size:16px;color:var(--text);">₹${navVal.toFixed(2)}</b>
+            </div>
+            <div style="background:var(--bg1);padding:10px;">
+              <span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">1Y RET</span>
+              <b style="font-size:16px;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</b>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+             <span style="font-size:9px;color:var(--dim);text-transform:uppercase;">${m.cat || m.type || ''}</span>
+             <span style="font-size:9px;color:var(--muted);font-weight:700;">${m.date || ''}</span>
+          </div>
+        </div>`;
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 function applyMFFilters(items) {
@@ -1662,12 +1855,15 @@ function renderCommodities() {
   let html = '<div style="padding:16px; font-family:var(--mono);">';
   sectionOrder.forEach((sec) => {
     const items = sections[sec]; if (!items || !items.length) return;
-    html += `<div style="margin-bottom:20px;">
-      <div style="border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:10px;font-size:10px;color:var(--orange);font-weight:600;letter-spacing:0.05em">${sec.toUpperCase()}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
+          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${sec}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr;gap:1px;background:var(--line);border:1px solid var(--line);">`;
     items.forEach((c) => {
       const p = parseFloat(c.data?.price || 0), pct = parseFloat(c.data?.percent_change || 0);
-      const sign = pct >= 0 ? '+' : ''; const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : 'flat';
+      const sign = pct >= 0 ? '+' : ''; const cls = pct > 0 ? 'status-up' : pct < 0 ? 'status-dn' : 'status-neutral';
       const hasMcx = c.convFn && p > 0;
       let primaryPrice = '--';
       if (p > 0) {
@@ -1678,14 +1874,17 @@ function renderCommodities() {
           primaryPrice = p >= 1000 ? p.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : p.toFixed(2);
         }
       }
-      html += `<div style="background:var(--bg2);padding:12px 14px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-          <span style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:500;">${c.label}</span>
-          <span style="font-size:9px;color:var(--dim);border:1px solid var(--line2);padding:0 4px;">${hasMcx ? c.indUnit : c.unit}</span>
-        </div>
-        <div style="font-size:18px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums">${primaryPrice}</div>
-        <div class="${cls}" style="font-size:10px;margin-top:2px;font-weight:500;">${sign}${pct.toFixed(2)}%</div>
-      </div>`;
+      html += `
+        <div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;margin-bottom:2px;">${c.label}</div>
+            <div style="font-size:9px;color:var(--dim);text-transform:uppercase;">${hasMcx ? c.indUnit : c.unit}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:20px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${primaryPrice}</div>
+            <div class="status-badge ${cls}" style="display:inline-block;margin-top:4px;">${sign}${pct.toFixed(2)}%</div>
+          </div>
+        </div>`;
     }); 
     html += '</div></div>';
   });
@@ -1705,7 +1904,7 @@ function renderLockin() {
   const el = document.getElementById('lockin-content'); if (!el) return;
   const events = lockinData?.events || []; 
   if (!events.length) { 
-    el.innerHTML = '<div style="color:var(--muted);padding:32px;text-align:center;font-size:11px;font-family:var(--mono);">No upcoming lock-in events detected.</div>'; 
+    el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;">No upcoming lock-in events detected.</div>'; 
     return; 
   }
   const grouped = {}; 
@@ -1717,22 +1916,28 @@ function renderLockin() {
   
   let html = '<div style="padding:16px; font-family:var(--mono);">';
   Object.entries(grouped).forEach(([date, list]) => {
-    html += `<div style="margin-bottom:20px;">
-      <div style="border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:10px;font-size:10px;color:var(--orange);font-weight:600;letter-spacing:0.05em">${date.toUpperCase()}</div>
-      <div style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
+          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;">${date.toUpperCase()}</span>
+          <span style="font-size:9px;color:var(--dim);">CORPORATE ACTIONS</span>
+        </div>
+        <div style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);">`;
     list.forEach(item => { 
       const days = Number(item.daysLeft); 
-      const countdown = Number.isFinite(days) ? (days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'TODAY' : `${days}d left`) : '--'; 
-      html += `<div style="background:var(--bg2);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <div style="font-size:12px;font-weight:600;color:var(--text);">${item.company}</div>
-          <div style="font-size:9px;color:var(--muted);margin-top:2px;">${item.event} · ${countdown}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:12px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums">${item.qty || '--'}</div>
-          <div style="font-size:9px;color:var(--orange);text-transform:uppercase;font-weight:600;">WATCHING</div>
-        </div>
-      </div>`; 
+      const countdown = Number.isFinite(days) ? (days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'TODAY' : `${days}d left`) : '--';
+      const impactCls = item.impact === 'High' ? 'status-dn' : item.impact === 'Medium' ? 'status-up' : 'status-neutral';
+      html += `
+        <div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);letter-spacing:0.5px;">${item.company}</div>
+            <div style="font-size:9px;color:var(--muted);margin-top:4px;text-transform:uppercase;">${item.event} <span style="color:var(--dim)">· ${countdown}</span></div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:14px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${item.qty || '--'}</div>
+            <div class="status-badge ${impactCls}" style="display:inline-block;margin-top:6px;">${item.impact || 'LOW'}</div>
+          </div>
+        </div>`; 
     });
     html += `</div></div>`;
   });
@@ -2066,6 +2271,7 @@ async function fetchIndicesFastData() {
     // processGlobal is only called from fetchGlobal() which uses /api/global directly
     renderApp();
     applyDashboardHealthLabel(dashStore.quotes || {});
+    fetchGlobal();
     if (!dalalFocusMode) refreshFinanceBridge();
     scheduleDashboardSlowLoad();
   } catch (e) {
