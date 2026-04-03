@@ -1,0 +1,227 @@
+<!--
+  SWITCHER WIDGET - Bridge / Dalal Wire / World Monitor
+
+  Drop this anywhere inside <body>.
+  Set CURRENT_APP to 'bridge', 'dalal', or 'worldmonitor'.
+  Override BRIDGE_URL, DALAL_URL, or WORLDMONITOR_URL if needed.
+-->
+
+<style>
+#switcher-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 10px 12px;
+  background: rgba(7, 9, 15, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #dde1ea;
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  user-select: none;
+}
+
+#switcher-btn:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: #0d1120;
+  transform: translateY(-1px);
+}
+
+#switcher-btn:active {
+  transform: translateY(0);
+}
+
+.sw-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.sw-icon.bridge {
+  background: rgba(201, 168, 76, 0.15);
+  color: #c9a84c;
+}
+
+.sw-icon.dalal {
+  background: rgba(255, 102, 0, 0.14);
+  color: #ff8a38;
+}
+
+.sw-arrow {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 10px;
+}
+
+.sw-label {
+  white-space: nowrap;
+}
+
+#sw-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #07090f;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+
+#sw-overlay.on {
+  display: flex;
+  pointer-events: all;
+}
+
+.sw-ov-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: #667a96;
+}
+
+.sw-ov-bar-wrap {
+  width: 160px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.sw-ov-bar {
+  height: 100%;
+  width: 0;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sw-ov-bar.bridge {
+  background: #c9a84c;
+}
+
+.sw-ov-bar.dalal {
+  background: #ff8a38;
+}
+</style>
+
+<div id="sw-overlay">
+  <div class="sw-ov-label" id="sw-ov-label">Connecting</div>
+  <div class="sw-ov-bar-wrap">
+    <div class="sw-ov-bar" id="sw-ov-bar"></div>
+  </div>
+</div>
+
+<div id="switcher-btn" onclick="swToggle()">
+  <div class="sw-icon" id="sw-from-icon">DW</div>
+  <span class="sw-arrow">-></span>
+  <div class="sw-icon" id="sw-to-icon">WM</div>
+  <span class="sw-label" id="sw-btn-label">App Switcher</span>
+</div>
+
+<div id="sw-panel" style="display:none;position:fixed;bottom:78px;right:24px;z-index:99999;background:#07090f;border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px rgba(0,0,0,.48);min-width:220px">
+  <a class="sw-link" id="sw-link-bridge" href="/" style="display:flex;align-items:center;gap:10px;padding:12px 16px;color:#c9a84c;text-decoration:none;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06)">BRIDGE</a>
+  <a class="sw-link" id="sw-link-dalal" href="/terminal" style="display:flex;align-items:center;gap:10px;padding:12px 16px;color:#ff8a38;text-decoration:none;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06)">DALAL WIRE</a>
+      <a class="sw-link" id="sw-link-worldmonitor" href="https://finance.worldmonitor.app/?variant=finance&preset=dalal" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:12px 16px;color:#8ec6ff;text-decoration:none;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.1em">WORLD MONITOR</a>
+</div>
+
+<script>
+(function () {
+  const CURRENT_APP = 'bridge'; // 'bridge' | 'dalal' | 'worldmonitor'
+  const BRIDGE_URL = '/';
+  const DALAL_URL = '/terminal';
+  const WORLDMONITOR_URL = /^(localhost|127\\.0\\.0\\.1)$/i.test(window.location.hostname)
+    ? 'http://127.0.0.1:3200/?variant=finance&preset=dalal'
+    : 'https://finance.worldmonitor.app/?variant=finance&preset=dalal';
+
+  const fromIcon = document.getElementById('sw-from-icon');
+  const toIcon = document.getElementById('sw-to-icon');
+  const btnLabel = document.getElementById('sw-btn-label');
+  const bar = document.getElementById('sw-ov-bar');
+  const ovLabel = document.getElementById('sw-ov-label');
+  const overlay = document.getElementById('sw-overlay');
+  const panel = document.getElementById('sw-panel');
+  const links = {
+    bridge: document.getElementById('sw-link-bridge'),
+    dalal: document.getElementById('sw-link-dalal'),
+    worldmonitor: document.getElementById('sw-link-worldmonitor'),
+  };
+
+  const meta = {
+    bridge: { icon: 'BR', cls: 'bridge', label: 'Bridge Home', url: BRIDGE_URL },
+    dalal: { icon: 'DW', cls: 'dalal', label: 'Dalal Wire', url: DALAL_URL },
+    worldmonitor: { icon: 'WM', cls: 'bridge', label: 'World Monitor', url: WORLDMONITOR_URL },
+  };
+
+  const current = meta[CURRENT_APP] || meta.bridge;
+  const target = CURRENT_APP === 'bridge' ? meta.dalal : meta.worldmonitor;
+
+  fromIcon.textContent = current.icon;
+  fromIcon.className = 'sw-icon ' + current.cls;
+  toIcon.textContent = target.icon;
+  toIcon.className = 'sw-icon ' + target.cls;
+  btnLabel.textContent = 'App Switcher';
+  bar.className = 'sw-ov-bar ' + target.cls;
+
+  Object.entries(links).forEach(([key, link]) => {
+    if (!link) return;
+    if (key === CURRENT_APP) {
+      link.style.background = 'rgba(255,255,255,.04)';
+      link.insertAdjacentHTML('beforeend', '<span style="margin-left:auto;color:#5b6679;font-size:10px">HERE</span>');
+      link.removeAttribute('href');
+      return;
+    }
+    const config = meta[key];
+    link.href = config.url;
+    link.addEventListener('click', function (event) {
+      event.preventDefault();
+      swGo(config.label, config.url, config.cls);
+    });
+  });
+
+  window.swToggle = function () {
+    if (!panel) return;
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  };
+
+  window.swGo = function (label, url, cls) {
+    ovLabel.textContent = label;
+    bar.className = 'sw-ov-bar ' + cls;
+    bar.style.width = '0';
+    overlay.classList.add('on');
+    if (panel) panel.style.display = 'none';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        bar.style.width = '100%';
+      });
+    });
+    setTimeout(function () {
+      if (url.startsWith('http')) {
+        window.open(url, '_blank', 'noopener');
+      } else {
+        window.location.href = url;
+      }
+    }, 520);
+  };
+
+  document.addEventListener('click', function (event) {
+    if (!panel) return;
+    if (!panel.contains(event.target) && !document.getElementById('switcher-btn').contains(event.target)) {
+      panel.style.display = 'none';
+    }
+  });
+})();
+</script>

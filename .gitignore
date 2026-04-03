@@ -1,0 +1,59 @@
+# ── SECRETS — NEVER COMMIT ──────────────────────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ── NSE SESSION COOKIE CACHE ─────────────────────────────────
+cookie-store.json
+nse-cookie.json
+.cookies/
+
+# ── NODE ─────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# ── LOGS ─────────────────────────────────────────────────────
+*.log
+logs/
+*.txt
+audit_*
+hardening_*
+test_*
+*.mjs
+!check-env.mjs
+!server.js
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ── EDITOR ───────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── BUILD / CACHE ────────────────────────────────────────────
+dist/
+build/
+.cache/
+.parcel-cache/
+.eslintcache
+
+# ── YAHOO FINANCE FETCH CACHE (used by yahoo-finance2) ───────
+.yf-cache/
+fetch-cache/

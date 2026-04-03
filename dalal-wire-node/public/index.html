@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dalal Wire Terminal</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="boot-splash" style="position:fixed;inset:0;background:#060608;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Courier New',monospace;animation:bootFade .4s ease .8s both">
+  <div style="color:#ff6600;font-size:28px;font-weight:bold;letter-spacing:4px;margin-bottom:12px;animation:brandPulse 1s ease-in-out infinite">DALAL WIRE</div>
+  <div style="color:#333;font-size:12px;letter-spacing:2px;margin-bottom:20px">TERMINAL v2.0</div>
+  <div style="display:flex;gap:4px">
+    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out infinite"></div>
+    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out .15s infinite"></div>
+    <div style="width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out .3s infinite"></div>
+  </div>
+</div>
+<style>
+@keyframes bootFade { to { opacity:0; pointer-events:none; } }
+@keyframes brandPulse { 0%,100%{text-shadow:0 0 14px rgba(255,102,0,.35)}50%{text-shadow:0 0 28px rgba(255,102,0,.7),0 0 50px rgba(255,102,0,.25)} }
+@keyframes dotPulse { 0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.7} }
+</style>
+<div id="bb">
+  <div id="topbar">
+    <span class="brand">DALAL<span> WIRE TERMINAL</span></span>
+    <div class="topright">
+      <button id="dw-focus-toggle" type="button" onclick="toggleDalalFocusMode()">TERMINAL FOCUS</button>
+      <span class="top-meta-pill top-meta-pill-live">LIVE</span>
+      <span id="last-updated" class="top-meta-pill">LOADING...</span>
+      <button id="terminal-refresh-btn" class="top-secondary-btn" type="button" onclick="manualRefresh()">REFRESH</button>
+      <button id="edit-btn" class="top-secondary-btn" type="button" onclick="toggleEdit()">EDIT</button>
+      <span id="mkt-st" class="mkt-closed">NSE CLOSED</span>
+      <span class="clk" id="clk">--:--:-- IST</span>
+    </div>
+  </div>
+
+  <div id="ticker-strip" onmouseenter="document.getElementById('ticker-inner').style.animationPlayState='paused'" onmouseleave="document.getElementById('ticker-inner').style.animationPlayState='running'"><span id="ticker-inner">
+    <span class="ti"><span class="ts">NIFTY50</span><span id="tk-nifty"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">SENSEX</span><span id="tk-sensex"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">BANKNIFTY</span><span id="tk-banknifty"><span class="skel-pill skel-val"></span></span> <span id="tk-banknifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">RELIANCE</span><span id="tk-reliance"><span class="skel-pill skel-val"></span></span> <span id="tk-reliance-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">TCS</span><span id="tk-tcs"><span class="skel-pill skel-val"></span></span> <span id="tk-tcs-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">INFY</span><span id="tk-infy"><span class="skel-pill skel-val"></span></span> <span id="tk-infy-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">HDFCBANK</span><span id="tk-hdfc"><span class="skel-pill skel-val"></span></span> <span id="tk-hdfc-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">ICICIBANK</span><span id="tk-icici"><span class="skel-pill skel-val"></span></span> <span id="tk-icici-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">SBI</span><span id="tk-sbi"><span class="skel-pill skel-val"></span></span> <span id="tk-sbi-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">WIPRO</span><span id="tk-wipro"><span class="skel-pill skel-val"></span></span> <span id="tk-wipro-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">TATAMOTORS</span><span id="tk-tatamotors"><span class="skel-pill skel-val"></span></span> <span id="tk-tatamotors-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">TATASTEEL</span><span id="tk-tatasteel"><span class="skel-pill skel-val"></span></span> <span id="tk-tatasteel-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">ADANIENT</span><span id="tk-adani"><span class="skel-pill skel-val"></span></span> <span id="tk-adani-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">USD/INR</span><span id="tk-usdinr"><span class="skel-pill skel-val"></span></span> <span id="tk-usdinr-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">GOLD</span><span id="tk-gold"><span class="skel-pill skel-val"></span></span> <span id="tk-gold-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">CRUDE WTI</span><span id="tk-crude"><span class="skel-pill skel-val"></span></span> <span id="tk-crude-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">NIFTY50</span><span id="tk-nifty2"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    <span class="ti"><span class="ts">SENSEX</span><span id="tk-sensex2"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+  </span></div>
+
+  <div id="body">
+    <div id="sidebar">
+      <div class="ph">
+        <span class="pt">Indices</span>
+      </div>
+      <div id="idx-list"></div>
+      <div class="ph" style="margin-top:0"><span class="pt">Macro</span><span style="color:#444;font-size:16px;margin-left:auto">India</span></div>
+      <div id="macro-list"></div>
+      <div id="mini-macro-charts">
+        <div class="mini-chart-card">
+          <div class="mini-chart-head">
+            <span class="mini-chart-title"><span>INDIA VIX</span><span id="mini-vix-tag" class="truth-tag truth-tag-unavailable">UNAVAILABLE</span></span>
+            <span id="mini-vix-val">--</span>
+          </div>
+          <div class="mini-chart-meta" id="mini-vix-meta">Awaiting NSE</div>
+          <canvas id="mini-vix-chart" height="48"></canvas>
+        </div>
+        <div class="mini-chart-card">
+          <div class="mini-chart-head">
+            <span class="mini-chart-title"><span>10Y G-SEC YIELD</span><span id="mini-gsec-tag" class="truth-tag truth-tag-delayed-15m">DELAYED 15m</span></span>
+            <span id="mini-gsec-val">--</span>
+          </div>
+          <div class="mini-chart-meta" id="mini-gsec-meta">Yahoo Finance India 10Y</div>
+          <canvas id="mini-gsec-chart" height="48"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="content-area">
+      <div id="search-bar">
+        <input id="q-input" type="text" placeholder="Search stories — crude, SBI, Tata, FII..." list="story-ac" autocomplete="off" />
+        <datalist id="story-ac">
+          <option value="Nifty"></option><option value="Sensex"></option><option value="Bank Nifty"></option><option value="Reliance"></option>
+          <option value="TCS"></option><option value="Infosys"></option><option value="HDFC Bank"></option><option value="SBI"></option>
+          <option value="crude oil"></option><option value="FII"></option><option value="DII"></option><option value="RBI"></option>
+          <option value="inflation"></option><option value="rupee"></option><option value="gold"></option><option value="IT sector"></option>
+          <option value="banking"></option><option value="pharma"></option><option value="auto"></option><option value="Adani"></option>
+          <option value="Tata Motors"></option><option value="Tata Steel"></option><option value="MCX"></option><option value="commodities"></option>
+        </datalist>
+        <button onclick="doSearch()">SEARCH</button>
+      </div>
+      
+      <div class="chips">
+        <span class="chip active-chip" onclick="loadCategory('market')">MARKET</span>
+        <span class="chip" onclick="loadCategory('banks')">BANKS</span>
+        <span class="chip" onclick="loadCategory('sectors')">SECTORS</span>
+        <span class="chip" onclick="loadCategory('macro')">MACRO</span>
+        <span class="chip" onclick="loadCategory('stocks')">STOCKS</span>
+        <span class="chip" onclick="loadCategory('global')">GLOBAL</span>
+      </div>
+      <div id="news-area">
+        <div id="headlines">
+          <div class="ph" style="justify-content:space-between"><span class="pt" id="hl-label">MARKET</span><span style="display:flex;align-items:center;gap:8px"><span style="color:#444;font-size:13px" id="hl-count">—</span><span onclick="refreshNews()" title="Refresh news" style="color:#ff6600;cursor:pointer;font-size:14px;padding:2px 8px;border:1px solid #ff6600;border-radius:2px;background:#1a0a00">↻</span></span></div>
+          <div id="hl-list"></div>
+        </div>
+
+        <div id="right-panel">
+          <div id="rp-tabs">
+            <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
+            <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
+            <span class="rp-tab" data-rp="global" onclick="switchRP('global')" style="border-color:#534AB7;color:#7F77DD">GLOBAL</span>
+            <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')" style="border-color:#2D6B4F;color:#4CAF82">HEATMAP</span>
+            <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')" style="border-color:#4A3B8C;color:#8B7FD4">MF/ETF</span>
+            <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')" style="border-color:#735A13;color:#E6B84A">COMMODITIES</span>
+            <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')" style="border-color:#5A676E;color:#AAB6BD">LOCK-IN</span>
+                <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')" style="border-color:#534AB7;color:#8B7FD4">SENTIMENT</span>
+            <div id="rp-ticker-row">
+              <div style="position:relative">
+                <input id="rp-ticker" type="text" placeholder="Search ticker..." autocomplete="off"
+                  oninput="showTickerDropdown(this.value)"
+                  onkeydown="handleTickerKey(event)"
+                  onfocus="showTickerDropdown(this.value)"
+                  style="width:220px" />
+                <div id="ticker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#0d0d18;border:1px solid #ff6600;border-top:none;z-index:999;max-height:280px;overflow-y:auto;border-radius:0 0 4px 4px"></div>
+              </div>
+              <button onclick="applyTicker()">GO</button>
+            </div>
+          </div>
+
+          <div id="rp-story">
+            <div id="state-view-root"></div>
+            <div id="detail-empty"><div style="font-size:22px;margin-bottom:10px">&#9634;</div>Click any headline<br>to read the full story</div>
+            <div id="detail-body">
+              <div class="db-header">
+                <span class="db-src" id="db-src">SOURCE</span>
+                <span class="db-back" onclick="clearDetail()">&#8592; back</span>
+              </div>
+              <div class="db-inner">
+                <div class="db-tags" id="db-tags"></div>
+                <div class="db-headline" id="db-headline"></div>
+                <div class="db-text" id="db-text"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="rp-advice">
+            <div id="advice-ticker-label" style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px;margin-bottom:10px">LIVE SIGNAL — NIFTY 50</div>
+            <div class="adv-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <span style="color:#fff;font-size:18px;font-weight:bold" id="adv-stance-label">Market Stance</span>
+                <span id="adv-stance-badge" style="background:#101626;color:#9bb2c7;border:1px solid #273448;font-size:16px;padding:2px 8px;border-radius:2px;font-weight:bold">WAITING</span>
+              </div>
+              <div id="adv-stance-text" style="color:#a09888;font-size:18px;line-height:1.8">Waiting for live signal data. Price, levels, and flow context will populate from the Dalal Wire APIs once the feed responds.</div>
+            </div>
+            <div class="adv-section">KEY LEVELS</div>
+            <div id="adv-key-levels" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;overflow:hidden;margin-bottom:10px">
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #1a1a2e"><div style="padding:5px 8px;color:#444;font-size:16px">LEVEL</div><div style="padding:5px 8px;color:#444;font-size:16px;text-align:center">VALUE</div><div style="padding:5px 8px;color:#444;font-size:16px;text-align:right">SIGNAL</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Strong Resist.</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">24,166</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff4444">SELL RALLY</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Resistance</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">23,777</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff9900">WATCH</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18;background:#0d0d1a"><div style="padding:5px 8px;color:#aaa;font-size:17px">▶ Current</div><div style="padding:5px 8px;color:#fff;font-size:18px;text-align:center;font-weight:bold">23,151</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#aaa">HERE</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Support 1</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">22,700</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#00cc66">BOUNCE</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px;border-bottom:1px solid #0d0d18"><div style="padding:5px 8px;color:#888;font-size:17px">Support 2</div><div style="padding:5px 8px;color:#e8dfc0;font-size:17px;text-align:center;font-weight:bold">22,400</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#00cc66">STRONG</div></div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px"><div style="padding:5px 8px;color:#888;font-size:17px">Bear Target</div><div style="padding:5px 8px;color:#ff4444;font-size:17px;text-align:center;font-weight:bold">21,743</div><div style="padding:5px 8px;font-size:16px;text-align:right;color:#ff4444">52W LOW</div></div>
+            </div>
+            <div class="adv-section">BROKER CALLS</div>
+            <div id="adv-broker-calls" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;margin-bottom:10px">
+              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">5paisa Research</div><div style="color:#666;font-size:17px;margin-top:2px">Sell rallies 23,500–23,777. Keep 30–40% cash.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">SELL RALLY</span></div>
+              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Kotak Securities</div><div style="color:#666;font-size:17px;margin-top:2px">Accumulate IT &amp; Pharma. Nifty P/E at 19.2x reasonable.</div></div><span style="background:#1a1000;color:#ff9900;border:1px solid #2a1800;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">SELECTIVE</span></div>
+              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Morgan Stanley</div><div style="color:#666;font-size:17px;margin-top:2px">Downgraded India to Underweight. Crude + FII risk.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">UNDERWEIGHT</span></div>
+              <div style="padding:8px 10px;border-bottom:1px solid #0d0d18;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">CLSA</div><div style="color:#666;font-size:17px;margin-top:2px">Overweight India long-term. Volatility = buy quality.</div></div><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">OVERWEIGHT</span></div>
+              <div style="padding:8px 10px;display:flex;justify-content:space-between;align-items:flex-start"><div><div style="color:#e8dfc0;font-size:18px;font-weight:bold">Jefferies India</div><div style="color:#666;font-size:17px;margin-top:2px">Wait for VIX below 18 and crude below $100.</div></div><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-left:8px">CAUTIOUS</span></div>
+            </div>
+            <div class="adv-section">SECTOR ADVICE</div>
+            <div id="adv-sector-advice" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;margin-bottom:10px">
+              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">IT</span><span style="color:#888;font-size:17px">Rupee tailwind. Buy Infy, TCS, Wipro on dips.</span><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:1px 6px;border-radius:2px">BUY</span></div>
+              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">PHARMA</span><span style="color:#888;font-size:17px">Defensive. Sun Pharma, Cipla, Dr Reddy's.</span><span style="background:#002a0d;color:#00cc66;border:1px solid #004d1a;font-size:16px;padding:1px 6px;border-radius:2px">BUY</span></div>
+              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">FMCG</span><span style="color:#888;font-size:17px">Stable. HUL, Marico hold for stability.</span><span style="background:#1a1000;color:#ff9900;border:1px solid #2a1800;font-size:16px;padding:1px 6px;border-radius:2px">HOLD</span></div>
+              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">BANKS</span><span style="color:#888;font-size:17px">Wait for VIX cool-off. Trend still down.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">WAIT</span></div>
+              <div style="padding:6px 10px;border-bottom:1px solid #0d0d18;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">AUTO</span><span style="color:#888;font-size:17px">Crude kills margins. Avoid until oil &lt;$95.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">AVOID</span></div>
+              <div style="padding:6px 10px;display:grid;grid-template-columns:70px 1fr auto;gap:6px;align-items:center"><span style="color:#e8dfc0;font-size:18px;font-weight:bold">METAL</span><span style="color:#888;font-size:17px">China slowdown + energy costs. Stay out.</span><span style="background:#1a0000;color:#ff4444;border:1px solid #330000;font-size:16px;padding:1px 6px;border-radius:2px">AVOID</span></div>
+            </div>
+            <div class="adv-section">RISK WATCHLIST</div>
+            <div id="adv-risk-watchlist" style="background:#0a0a18;border:1px solid #1a1a2e;border-radius:4px;padding:10px">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">Crude above $100 — inflation + CAD risk</span></div>
+                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">FII selling beyond 15 sessions → Nifty 22,000</span></div>
+                <div style="display:flex;gap:8px"><span style="color:#ff4444;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">RBI April MPC (Apr 7–9) — hawkish surprise risk</span></div>
+                <div style="display:flex;gap:8px"><span style="color:#ff9900;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">March expiry Mar 20 — hedge positions now</span></div>
+                <div style="display:flex;gap:8px"><span style="color:#00cc66;font-size:17px">▶</span><span style="color:#a09888;font-size:18px">US-Iran ceasefire → 3–5% relief rally possible</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="rp-global">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+              <div style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px">GLOBAL MARKETS — LIVE SNAPSHOT</div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span id="gl-updated" style="color:#444;font-size:18px">--</span>
+                <button onclick="forceGlobal()" style="background:#1a0a00;border:1px solid #ff6600;color:#ff6600;font-family:'Courier New',monospace;font-size:18px;padding:4px 12px;cursor:pointer;border-radius:3px">REFRESH</button>
+              </div>
+            </div>
+            <div id="gl-content">
+              <div style="color:#444;font-size:17px;text-align:center;padding:40px">Click REFRESH or switch to this tab to load live global data</div>
+            </div>
+          </div>
+
+          <div id="rp-earnings" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+            <div style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px;margin-bottom:14px">EARNINGS CALENDAR — Q4 FY26</div>
+            <div id="earnings-content"></div>
+          </div>
+
+          <div id="rp-heatmap" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="color:#4CAF82;font-size:17px;font-weight:bold;letter-spacing:1.5px">NIFTY 50 — HEATMAP</div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                <input id="hm-q" type="text" placeholder="Filter (e.g. banks, IT, RELIANCE)"
+                  oninput="renderHeatmap()"
+                  style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:6px 10px;border-radius:3px;outline:none;width:250px" />
+                <select id="hm-set" onchange="onHeatmapSetChange()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                  <option value="nifty">Universe: Nifty 50</option>
+                  <option value="indices">Universe: India + Global Indices</option>
+                </select>
+                <select id="hm-sort" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                  <option value="mcap">Sort: Market Cap</option>
+                  <option value="pct">Sort: % Change</option>
+                  <option value="sym">Sort: Symbol</option>
+                </select>
+                <select id="hm-group" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                  <option value="sector">Group by Sector</option>
+                  <option value="none">By Market Cap</option>
+                </select>
+                <button onclick="forceHeatmap()" style="background:#0a1a0d;border:1px solid #4CAF82;color:#4CAF82;font-family:'Courier New',monospace;font-size:13px;padding:4px 12px;cursor:pointer;border-radius:3px">↻</button>
+              </div>
+            </div>
+            <div class="hm-legend-row">
+              <div class="hm-legend">
+                <span class="hm-lg">-4%</span>
+                <span class="hm-grad" aria-hidden="true"></span>
+                <span class="hm-lg">+4%</span>
+              </div>
+              <div id="hm-meta" class="hm-meta">—</div>
+            </div>
+            <div id="heatmap-content"><div style="color:#444;text-align:center;padding:40px;font-size:14px">Loading heatmap...</div></div>
+          </div>
+
+          <div id="rp-mf" style="display:none;overflow-y:auto;flex:1;padding:14px 16px">
+
+            <!-- Header row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="color:#8B7FD4;font-size:16px;font-weight:bold;letter-spacing:1.5px">MF / ETF SCREENER</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span id="mf-last-upd" style="color:#2a2a4a;font-size:10px;letter-spacing:.4px">--</span>
+                <button onclick="forceMF()" class="sc-btn">↻ REFRESH</button>
+              </div>
+            </div>
+
+            <!-- Tab row -->
+            <div style="display:flex;gap:6px;margin-bottom:12px">
+              <span id="mftab-mf"  onclick="switchMFTab('mf')"  class="sc-vbtn sc-vbtn-on">MUTUAL FUNDS</span>
+              <span id="mftab-etf" onclick="switchMFTab('etf')" class="sc-vbtn">ETFs</span>
+            </div>
+
+            <!-- Search + sort bar -->
+            <div class="sc-bar">
+              <input id="mf-q" class="sc-search" type="text" placeholder="Search — HDFC, Tata, Flexi, Bluechip, SBI..." autocomplete="off"
+                oninput="onMFSearch(this.value)" />
+              <select id="mf-sort" class="sc-sel" onchange="renderMF()">
+                <option value="amc">Sort: AMC</option>
+                <option value="ret1y">Sort: 1Y Return</option>
+                <option value="ret3y">Sort: 3Y Return</option>
+                <option value="ret5y">Sort: 5Y Return</option>
+                <option value="aum">Sort: AUM</option>
+                <option value="er">Sort: Expense Ratio</option>
+                <option value="nav">Sort: NAV</option>
+                <option value="label">Sort: Name</option>
+              </select>
+              <select id="mf-cat" class="sc-sel" onchange="renderMF()">
+                <option value="">All Categories</option>
+                <option value="Large Cap">Large Cap</option>
+                <option value="Mid Cap">Mid Cap</option>
+                <option value="Small Cap">Small Cap</option>
+                <option value="Flexi Cap">Flexi Cap</option>
+                <option value="ELSS">ELSS</option>
+                <option value="Index">Index</option>
+                <option value="Debt">Debt</option>
+                <option value="Hybrid">Hybrid</option>
+                <option value="FoF">Fund of Funds</option>
+              </select>
+              <div style="display:flex;gap:4px">
+                <button id="mf-vcard" onclick="setMFView('card')" class="sc-vbtn sc-vbtn-on" title="Card view">▦</button>
+                <button id="mf-vlist" onclick="setMFView('list')" class="sc-vbtn" title="List view">☰</button>
+              </div>
+            </div>
+
+            <!-- AMC filter chips -->
+            <div class="sc-chips" id="mf-amc-chips"></div>
+
+            <!-- Count row -->
+            <div class="sc-view-row">
+              <span id="mf-count" class="sc-count">—</span>
+            </div>
+
+            <!-- Content -->
+            <div id="mf-content"><div style="color:#444;text-align:center;padding:40px;font-size:13px">Loading screener data...</div></div>
+
+          </div>
+
+          <div id="rp-commodities" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+            <div class="mcx-header">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div class="mcx-title">MCX COMMODITIES</div>
+                <span class="mcx-badge">INDIA</span>
+                <span class="mcx-badge" style="border-color:rgba(0,204,102,.3);color:#3a8a5a;background:rgba(0,204,102,.06)">LIVE</span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span id="mcx-last-upd" style="color:#3a3226;font-size:10px;letter-spacing:.4px">--</span>
+                <button class="mcx-refresh-btn" onclick="forceCommodities()">↻ REFRESH</button>
+              </div>
+            </div>
+            <div id="commodities-content"><div style="color:#554d32;text-align:center;padding:40px;font-size:14px">Loading MCX commodities...</div></div>
+          </div>
+
+          <div id="rp-lockin" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="color:#AAB6BD;font-size:17px;font-weight:bold;letter-spacing:1.5px">EQUITY LOCK-IN EXPIRY CALENDAR</div>
+            </div>
+            <div id="lockin-content"></div>
+          </div>
+          <div id="rp-feargreed" style="display:none;overflow-y:auto;flex:1;min-height:0;scrollbar-gutter:stable;overscroll-behavior:contain">
+  <div style="padding:20px;text-align:center;color:#444;font-size:13px">Loading sentiment data...</div>
+</div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span><span class="dot-g"></span>LIVE</span>
+    <span>NSE &bull; BSE &bull; Yahoo Finance</span>
+    <span id="sb-q">INDIA MARKET</span>
+    <span id="sb-refresh" style="color:#444;cursor:pointer" onclick="manualRefresh()" title="Click to refresh now">REFRESH IN 30s</span>
+    <span style="margin-left:auto;cursor:pointer;color:#333" onclick="toggleHelp()" title="Keyboard shortcuts">? SHORTCUTS</span>
+  </div>
+</div>
+<!-- FLOATING NAV WIDGET -->
+<div id="nav-widget" style="position:fixed;bottom:16px;left:16px;z-index:9999;font-family:'Courier New',monospace">
+  <div id="nav-pill" onclick="document.getElementById('nav-panel').classList.toggle('open')" style="cursor:pointer;background:#0d1120;border:1px solid rgba(255,102,0,.3);border-radius:20px;padding:6px 14px;font-size:10px;letter-spacing:.1em;color:#ff6600;display:flex;align-items:center;gap:6px;transition:all .2s;box-shadow:0 4px 20px rgba(0,0,0,.6)">
+    <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ff6600;animation:dotPulse .6s ease-in-out infinite"></span>APP SWITCHER
+  </div>
+  <div id="nav-panel" style="display:none;position:absolute;bottom:calc(100% + 8px);left:0;background:#0d1120;border:1px solid rgba(255,255,255,.1);border-radius:8px;overflow:hidden;min-width:220px;box-shadow:0 8px 30px rgba(0,0,0,.7)">
+    <a href="/" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#c9a84c;font-size:10px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06);transition:background .15s">
+      <span style="font-size:14px">⬡</span>BRIDGE
+    </a>
+    <a href="/terminal" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#ff6600;font-size:10px;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(255,102,0,.06)">
+      <span style="font-size:14px">◈</span>DALAL WIRE <span style="margin-left:auto;color:#333;font-size:9px">● HERE</span>
+    </a>
+            <a href="https://finance.worldmonitor.app/?variant=finance&amp;preset=dalal" onclick="this.href = window.getWorldMonitorStandaloneUrl ? window.getWorldMonitorStandaloneUrl() : this.href" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:10px 16px;text-decoration:none;color:#7fd3ff;font-size:10px;letter-spacing:.1em;transition:background .15s">
+      <span style="font-size:14px">◎</span>WORLD MONITOR
+    </a>
+  </div>
+</div>
+<div id="focus-esc-hint" aria-hidden="true">ESC TO EXIT FOCUS</div>
+<style>
+  #nav-pill:hover{border-color:rgba(255,102,0,.6);transform:translateY(-2px)}
+  #nav-panel.open{display:block!important;animation:navSlideUp .2s ease}
+  #nav-panel a:hover{background:rgba(255,255,255,.04)}
+  @keyframes navSlideUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+<script>document.addEventListener('click',e=>{const p=document.getElementById('nav-panel'),w=document.getElementById('nav-widget');if(p&&!w.contains(e.target))p.classList.remove('open')})</script>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

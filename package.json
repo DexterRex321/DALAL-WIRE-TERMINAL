@@ -1,0 +1,25 @@
+{
+  "name": "dalal-wire",
+  "version": "2.0.0",
+  "description": "Bloomberg-style Indian stock market terminal — Express backend + vanilla JS frontend",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "dev:watch": "node --watch server.js",
+    "gen:secret": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    "check:env": "node check-env.mjs"
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.0",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.1",
+    "yahoo-finance2": "^3.13.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
