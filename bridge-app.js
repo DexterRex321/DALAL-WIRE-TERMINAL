@@ -311,12 +311,12 @@ function renderFiiDii() {
   const today = fiiData.today || {};
   const status = fiiData.status || {};
 
-  const fiiBuy  = Number(fiiData.fii?.[0]?.buy || 0);
-  const fiiSell = Number(fiiData.fii?.[0]?.sell || 0);
-  const fiiNet  = Number(today.fii_net ?? fiiData.fii?.[0]?.net ?? 0);
-  const diiBuy  = Number(fiiData.dii?.[0]?.buy || 0);
-  const diiSell = Number(fiiData.dii?.[0]?.sell || 0);
-  const diiNet  = Number(today.dii_net ?? fiiData.dii?.[0]?.net ?? 0);
+  const fiiBuy  = Number(today.fii_buy  ?? fiiData.fii?.[0]?.buy  ?? 0);
+  const fiiSell = Number(today.fii_sell ?? fiiData.fii?.[0]?.sell ?? 0);
+  const fiiNet  = Number(today.fii_net  ?? fiiData.fii?.[0]?.net  ?? 0);
+  const diiBuy  = Number(today.dii_buy  ?? fiiData.dii?.[0]?.buy  ?? 0);
+  const diiSell = Number(today.dii_sell ?? fiiData.dii?.[0]?.sell ?? 0);
+  const diiNet  = Number(today.dii_net  ?? fiiData.dii?.[0]?.net  ?? 0);
 
   setText('fii-buy',  `₹${Math.abs(Math.round(fiiBuy)).toLocaleString('en-IN')}Cr`);
   setText('fii-sell', `₹${Math.abs(Math.round(fiiSell)).toLocaleString('en-IN')}Cr`);
@@ -328,14 +328,14 @@ function renderFiiDii() {
   const dn = $('dii-net');
   if (dn) { dn.textContent = fmtCr(diiNet); dn.className = `fii-net ${diiNet >= 0 ? 'up' : 'dn'}`; }
 
-  const totalAbsBuy  = Math.max(Math.abs(fiiBuy) + Math.abs(diiBuy), 1);
-  const totalAbsSell = Math.max(Math.abs(fiiSell) + Math.abs(diiSell), 1);
-  const maxFlow = Math.max(totalAbsBuy, totalAbsSell);
+  const combinedBuy  = Math.abs(fiiBuy)  + Math.abs(diiBuy);
+  const combinedSell = Math.abs(fiiSell) + Math.abs(diiSell);
+  const maxFlow      = Math.max(combinedBuy, combinedSell);
   
   const bBar = $('fii-bar-buy');
   const sBar = $('fii-bar-sell');
-  if (bBar) bBar.style.width = (totalAbsBuy / maxFlow * 100) + '%';
-  if (sBar) sBar.style.width = (totalAbsSell / maxFlow * 100) + '%';
+  if (bBar) bBar.style.width = maxFlow > 0 ? (combinedBuy / maxFlow * 100) + '%' : '0%';
+  if (sBar) sBar.style.width = maxFlow > 0 ? (combinedSell / maxFlow * 100) + '%' : '0%';
 
   const t = $('fii-tag');
   if (t) {

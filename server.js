@@ -630,12 +630,12 @@ async function getFiiDiiData() {
   if (Array.isArray(raw)) {
     raw.forEach(row => {
       const entry = {
-        date:  row.date  || row.DATE  || '',
-        buy:   parseFloat(row.buyValue  || row.BUY_VALUE  || 0),
-        sell:  parseFloat(row.sellValue || row.SELL_VALUE || 0),
-        net:   parseFloat(row.netValue  || row.NET_VALUE  || 0),
+        date:  row.date || row.DATE || row.Date || '',
+        buy:   parseFloat(row.buyValue  || row.BUY_VALUE  || row.buy_value  || row.buy || 0),
+        sell:  parseFloat(row.sellValue || row.SELL_VALUE || row.sell_value || row.sell || 0),
+        net:   parseFloat(row.netValue  || row.NET_VALUE  || row.net_value  || row.net || 0),
       };
-      const cat = (row.category || row.CATEGORY || '').toUpperCase();
+      const cat = (row.category || row.CATEGORY || row.Category || '').toUpperCase();
       if (cat.includes('FII') || cat.includes('FPI')) result.fii.push(entry);
       else if (cat.includes('DII'))                   result.dii.push(entry);
     });
@@ -644,9 +644,13 @@ async function getFiiDiiData() {
   result.fii   = result.fii.slice(0, 10);
   result.dii   = result.dii.slice(0, 10);
   result.today = {
-    fii_net: result.fii[0]?.net ?? null,
-    dii_net: result.dii[0]?.net ?? null,
-    date:    result.fii[0]?.date || result.dii[0]?.date || '',
+    fii_buy:  result.fii[0]?.buy  ?? 0,
+    fii_sell: result.fii[0]?.sell ?? 0,
+    fii_net:  result.fii[0]?.net  ?? 0,
+    dii_buy:  result.dii[0]?.buy  ?? 0,
+    dii_sell: result.dii[0]?.sell ?? 0,
+    dii_net:  result.dii[0]?.net  ?? 0,
+    date:     result.fii[0]?.date || result.dii[0]?.date || '',
   };
   // Freshness: FII/DII data is always EOD — never show as LIVE
   result.status = buildStatus('EOD', 'NSE fiidiiTradeReact', {
@@ -1038,8 +1042,12 @@ async function getDashboardSlowData() {
         risk,
         driver,
         fiiDii: {
-          fii_net:     fiiDii?.today?.fii_net ?? null,
-          dii_net:     fiiDii?.today?.dii_net ?? null,
+          fii_buy:     fiiDii?.today?.fii_buy  ?? 0,
+          fii_sell:    fiiDii?.today?.fii_sell ?? 0,
+          fii_net:     fiiDii?.today?.fii_net  ?? 0,
+          dii_buy:     fiiDii?.today?.dii_buy  ?? 0,
+          dii_sell:    fiiDii?.today?.dii_sell ?? 0,
+          dii_net:     fiiDii?.today?.dii_net  ?? 0,
           date:        fiiDii?.today?.date || '',
           status:      fiiDii?.status || buildStatus('UNAVAILABLE', 'NSE FII/DII'),
           fii_history: (fiiDii?.fii || []).slice(0, 5),
@@ -1714,3 +1722,10 @@ if (!IS_VERCEL) {
 }
 
 export default app;
+
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRITICAL] Unhandled Rejection:', reason);
+});

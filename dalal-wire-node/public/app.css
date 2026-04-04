@@ -35,6 +35,7 @@ body{display:flex;flex-direction:column}
   font-family:var(--mono);
   display:flex;flex-direction:column;
   height:100vh;width:100vw;
+  overflow:hidden;
 }
 
 /* ── TOPBAR ── */
@@ -140,9 +141,9 @@ body{display:flex;flex-direction:column}
 /* ── LAYOUT ── */
 #body { display: grid; grid-template-columns: 360px 540px 1fr; flex: 1; min-height: 0; }
 #sidebar { border-right: 1px solid var(--line); overflow-y: auto; height: 100%; min-width: 0; max-width: 360px; padding-bottom: 12px; background: var(--bg); }
-#news-column { border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); height: 100%; }
-#right-panel { display: flex; flex-direction: column; background: var(--bg); height: 100%; }
-#headlines { flex: 1; overflow-y: auto; }
+#news-column { border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); height: 100%; min-height: 0; }
+#right-panel { display: flex; flex-direction: column; background: var(--bg); height: 100%; min-height: 0; }
+#headlines { flex: 1; overflow-y: auto; min-height: 0; }
 
 
 /* ── PANEL HEADERS ── */
@@ -312,11 +313,7 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 .chip.active-chip { background: var(--bg2); border-color: var(--orange); color: var(--orange); }
 
 
-/* ── NEWS AREA ── */
-#news-area{display:grid;grid-template-columns:1.06fr 1.34fr;flex:1;overflow:hidden;min-height:420px;transition:grid-template-columns var(--tMed) var(--ease2)}
-#news-area.wm-focus{grid-template-columns:.86fr 1.54fr}
-#headlines{border-right:1px solid #1a1a2e;overflow-y:auto;height:100%;min-height:0;scrollbar-gutter:stable;overscroll-behavior:contain;max-width:100%;opacity:1;transition:max-width var(--tMed) var(--ease2), opacity var(--tMed) var(--ease2), border-color var(--tFast) var(--ease2)}
-#right-panel{display:flex;flex-direction:column;overflow:hidden;height:100%;min-height:0}
+/* ── (STALE NEWS AREA DEFINITIONS REMOVED) ── */
 
 /* ── RIGHT PANEL TABS ── */
 #rp-tabs{

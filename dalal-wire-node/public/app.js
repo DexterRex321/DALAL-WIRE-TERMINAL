@@ -1792,13 +1792,7 @@ async function init() {
   // FIX 1: Warm auth token BEFORE any API call
   await getDalalToken().catch(() => {});
 
-  // Init smooth scroll
-  try {
-    const lenis = new Lenis({ lerp: 0.1, duration: 1.2, smoothWheel: true });
-    function raf(time) { lenis.raf(time); requestAnimationFrame(raf); }
-    requestAnimationFrame(raf);
-    window.lenis = lenis;
-  } catch(e) { /* Lenis not available, skip */ }
+  // Native scrolling for internal panels is used instead of Lenis to avoid event hijacking.
 
   try {
     // Fast indices first (shows data immediately)
