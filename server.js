@@ -182,12 +182,15 @@ function verifySessionToken(token, req) {
 }
 
 app.get('/api/auth/session', tokenLimit, (req, res) => {
-  const origin = req.headers.origin;
+  const origin  = req.headers.origin;
   const referer = req.headers.referer;
-  const isAllowedBrowser = ALLOWED_ORIGINS.some(allowed => {
+  const isLocal = !IS_PROD && ((origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) || (referer && (referer.includes('localhost') || referer.includes('127.0.0.1'))));
+  
+  const isAllowedBrowser = isLocal || ALLOWED_ORIGINS.some(allowed => {
     const cleanAllowed = allowed.replace(/\/$/, '');
     return (origin && origin.startsWith(cleanAllowed)) || (referer && referer.startsWith(cleanAllowed));
   });
+
   if (isAllowedBrowser || (!IS_PROD && !API_SECRET)) {
     return res.json({ token: generateSessionToken(req) });
   }

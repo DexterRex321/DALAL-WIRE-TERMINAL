@@ -138,11 +138,11 @@ body{display:flex;flex-direction:column}
 .up{color:var(--good)}.dn{color:var(--bad)}.flat{color:#666}
 
 /* ── LAYOUT ── */
-#body{display:grid;grid-template-columns:280px 420px 1fr;flex:1;min-height:0;}
-#sidebar{border-right:1px solid var(--line);overflow-y:auto;height:100%;min-width:0;max-width:264px;padding-bottom:12px;background:var(--bg);}
-#news-column{border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--bg);height:100%;}
-#right-panel{display:flex;flex-direction:column;background:var(--bg);height:100%;}
-#headlines{flex:1;overflow-y:auto;}
+#body { display: grid; grid-template-columns: 360px 540px 1fr; flex: 1; min-height: 0; }
+#sidebar { border-right: 1px solid var(--line); overflow-y: auto; height: 100%; min-width: 0; max-width: 360px; padding-bottom: 12px; background: var(--bg); }
+#news-column { border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); height: 100%; }
+#right-panel { display: flex; flex-direction: column; background: var(--bg); height: 100%; }
+#headlines { flex: 1; overflow-y: auto; }
 
 
 /* ── PANEL HEADERS ── */
@@ -887,8 +887,8 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 .week52-bar{margin-top:10px;opacity:.78}
 
 /* ── PAGE LOAD STAGGER ── */
-#sidebar{}
-#content-area{}
+/* ── PAGE LOAD STAGGER ── */
+/* Empty rulesets removed */
 
 /* ── SCROLLBARS ── */
 ::-webkit-scrollbar{width:4px}
@@ -906,19 +906,16 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
   position: relative;
 }
 
-.mf-skel::after {
-}
+.mf-skel::after { display: none; }
 
 /* Topbar scan line */
-#topbar::after {
-}
+#topbar::after { display: none; }
 
 /* Value update flash on ticker items */
-.tick-flash { }
+.tick-flash { display: none; }
 
 /* 52W bar dot pulse */
-#w52p-s-nifty, #w52p-s-sensex {
-}
+#w52p-s-nifty, #w52p-s-sensex { display: none; }
 
 /* ══════════════════════════════════════════════
    PHASE 2 — DEEPER ANIMATIONS & POLISH
@@ -935,7 +932,7 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 }
 
 /* ── INDEX VALUE NUMBER ANIMATION ── */
-.idx-val.num-update { }
+.idx-val.num-update { display: inline-block; }
 
 /* ── SIDEBAR MACRO ROW HOVER INDICATOR ── */
 .macro-row::before {
@@ -960,19 +957,15 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 }
 
 /* ── ADVICE PANEL ANIMATIONS ── */
-#rp-advice { }
+#rp-advice { display: flex; flex-direction: column; }
 .adv-card { }
 .adv-card:hover { border-color: var(--line2); }
 
 /* Stance badge pulse */
-#adv-stance-badge {
-}
+#adv-stance-badge { display: inline-block; }
 
 /* ── EARNINGS CARD HOVER ── */
-#rp-earnings [style*="background:#0a0a18"] {
-}
-#rp-earnings [style*="background:#0a0a18"]:hover {
-}
+/* Earnings hover logic handled in JS or via global hover */
 
 /* ── GLOBAL PANEL REGION ENTER ── */
 .gl-region {
@@ -1005,8 +998,7 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 .mcx-card:hover .mcx-ind-row {
   background: var(--bg2);
 }
-.mcx-ind-val {
-}
+.mcx-ind-val { display: inline-block; }
 
 /* ── HEATMAP SECTOR TITLE HOVER ── */
 .hm-sector-title:hover b { color: var(--text); }
@@ -1046,28 +1038,13 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 }
 
 /* ── CHIPS ROW STAGGER ── */
-.chips .chip:nth-child(1) { }
-.chips .chip:nth-child(2) { }
-.chips .chip:nth-child(3) { }
-.chips .chip:nth-child(4) { }
-.chips .chip:nth-child(5) { }
-.chips .chip:nth-child(6) { }
-.chip { }
-
-/* ── RP TAB STAGGER ── */
-.rp-tab { }
-
-/* ── MINI CHART CARD REVEAL ── */
-.mini-chart-card { }
-
-/* ── IDX CELL STAGGER ── */
-.idx-cell { }
-
-/* ── TOPBAR RIGHT STAGGER ── */
-.topright { }
-
-/* ── SEARCH BAR REVEAL ── */
-#search-bar { }
+.chips .chip:nth-child(1), .chips .chip:nth-child(2), .chips .chip:nth-child(3), .chips .chip:nth-child(4), .chips .chip:nth-child(5), .chips .chip:nth-child(6) { opacity: 1; }
+.chip { display: inline-flex; }
+.rp-tab { display: inline-flex; }
+.mini-chart-card { display: block; }
+.idx-cell { display: flex; }
+.topright { display: flex; }
+#search-bar { display: flex; }
 
 /* ── VALUE FLASH FOR TICKER STRIP ── */
 .ti .up, .ti .dn {
@@ -1609,12 +1586,12 @@ body.dalal-focus-mode #nav-widget{
 }
 
 @media (max-width: 1180px){
-  #topbar{flex-wrap:wrap;gap:10px}
+  #topbar{flex-wrap:wrap;gap:10px;height:auto;min-height:var(--tb-h);padding:8px 18px}
   .topright{width:100%;justify-content:flex-end;flex-wrap:wrap}
   #search-bar{flex-wrap:wrap}
   #rp-ticker-row{margin-left:0;width:100%}
   #rp-ticker-row input{width:100%}
-  #body{grid-template-columns:220px minmax(0,1fr)}
+  #body{grid-template-columns:300px 500px minmax(0,1fr)}
 }
 @media (max-width: 980px){
   html,body,#bb{overflow:auto}

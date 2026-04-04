@@ -16,24 +16,26 @@ async function getDalalToken() {
 }
 
 const originalFetch = window.fetch;
-window.fetch = async function () {
-  const url = arguments[0];
+window.fetch = async function (...args) {
+  const url = args[0];
   const isApi = typeof url === 'string' && url.includes('/api/') && !url.includes('/api/auth/session');
   
   if (isApi) {
     const token = await getDalalToken();
-    if (!arguments[1]) arguments[1] = {};
-    if (!arguments[1].headers) arguments[1].headers = {};
-    arguments[1].headers['x-dalal-token'] = token;
+    const options = args[1] || {};
+    options.headers = { ...(options.headers || {}), 'x-dalal-token': token };
+    args[1] = options;
   }
   
-  let result = await originalFetch.apply(this, arguments);
+  let result = await originalFetch.apply(window, args);
   
   if (isApi && result.status === 401) {
     dToken = null;
     const newToken = await getDalalToken();
-    arguments[1].headers['x-dalal-token'] = newToken;
-    result = await originalFetch.apply(this, arguments);
+    const options = args[1] || {};
+    options.headers = { ...(options.headers || {}), 'x-dalal-token': newToken };
+    args[1] = options;
+    result = await originalFetch.apply(window, args);
   }
   
   return result;
@@ -370,6 +372,7 @@ let dashboardSlowController = null;
 let refreshNewsTimer = null;
 let slowBootScheduled = false;
 let pendingStateTransition = '';
+// FIX: isStartupBoot starts true, only init() sets it false
 let isStartupBoot = true;
 
 function getStateTransition(fromView, toView) {
@@ -479,15 +482,12 @@ function renderApp() {
 
 function renderPulse() {
   const root = getExplorerRoot(); if (!root) return;
-  
-  // Market Pulse replaces the redundant indices list
   let html = `
     <div class="pulse-container">
       <div class="pulse-header">
         <div class="pulse-title">MARKET PULSE</div>
         <div class="pulse-subtitle">Live intra-day snapshot and trend analysis</div>
       </div>
-      
       <div class="pulse-grid">
         <div class="pulse-card">
           <div class="pulse-card-label">INTRA-DAY BIAS</div>
@@ -502,53 +502,33 @@ function renderPulse() {
           <div id="pulse-breadth" class="pulse-card-value">--</div>
         </div>
       </div>
-
       <div class="pulse-section-title">GLOBAL CONTEXT</div>
       <div id="pulse-global-list" class="pulse-mini-list">
-        <div class="pulse-loading">Hydrating global feeds...</div>
+        <div class="pulse-loading">Loading global feeds...</div>
       </div>
-
       <div class="pulse-footer">
         Select a news story for deep-dive analysis or use the tabs above for specialized data modules.
       </div>
     </div>
   `;
   root.innerHTML = html;
-  
-  // Trigger hydration of pulse data
   hydratePulseData();
 }
 
 async function hydratePulseData() {
-  // Sync with global and finance data
-  const biasEl = document.getElementById('pulse-bias');
   const vixEl = document.getElementById('pulse-vix');
-  const breadthEl = document.getElementById('pulse-breadth');
   const globalList = document.getElementById('pulse-global-list');
-
-  // Breadth from existing state
-  if (breadthEl && dashStore?.quotes?.['NIFTY:NSE']) {
-    const q = dashStore.quotes['NIFTY:NSE'];
-    if (q.advances != null) {
-      breadthEl.textContent = `${q.advances} : ${q.declines}`;
-      breadthEl.style.color = q.advances > q.declines ? 'var(--green)' : 'var(--red)';
-    }
-  }
-
-  // VIX from finance data
   if (vixEl) {
-    const v = document.getElementById('s-vix')?.textContent || '--';
+    const v = document.getElementById('mini-vix-val')?.textContent || '--';
     vixEl.textContent = v;
   }
-
-  // Global small items
   if (globalList) {
     if (!globalData) {
       if (!globalFetching) fetchGlobal();
       globalList.innerHTML = '<div class="pulse-loading">Fetching global feeds...</div>';
       return;
     }
-    const items = ['DXY', 'US10Y', 'GOLD', 'CRUDE', 'BTCUSD'];
+    const items = ['DXY', 'US10Y', 'GOLD', 'CRUDE', 'SP500'];
     let gHtml = '';
     items.forEach(k => {
       const d = globalData[k];
@@ -556,19 +536,11 @@ async function hydratePulseData() {
         const pct = d.percent_change || 0;
         const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : '';
         const sign = pct >= 0 ? '+' : '';
-        gHtml += `<div class="pulse-mini-item">
-          <span>${k}</span>
-          <b class="${cls}">${d.price?.toFixed(2)} (${sign}${pct.toFixed(2)}%)</b>
-        </div>`;
+        gHtml += `<div class="pulse-mini-item"><span>${k}</span><b class="${cls}">${(d.price||0).toFixed(2)} (${sign}${pct.toFixed(2)}%)</b></div>`;
       }
     });
-    globalList.innerHTML = gHtml || '<div class="pulse-empty">No global data</div>';
+    globalList.innerHTML = gHtml || '<div class="pulse-empty">No global data available</div>';
   }
-}
-
-function renderIndices() {
-  // Keeping renderIndices for the left sidebar or other hidden uses if any
-  // But root is now managed by renderPulse in the default state
 }
 
 function buildIndexModalMarkup() {
@@ -602,7 +574,7 @@ function buildIndexModalMarkup() {
         <span class="section-skeleton-line section-skeleton-line-short"></span>
         <span class="state-modal-bar"><span class="state-modal-bar-fill state-modal-bar-fill-skeleton" style="width:58%"></span></span>
       </div>`).join('');
-  return `<section class="state-modal-card state-modal-card-index ${pendingStateTransition ? `state-modal-card-${pendingStateTransition}` : ''}" onclick="event.stopPropagation()">
+  return `<section class="state-modal-card state-modal-card-index" onclick="event.stopPropagation()">
     <div class="state-modal-head">
       <div>
         <div class="state-eyebrow">INDEX DETAIL</div>
@@ -616,7 +588,7 @@ function buildIndexModalMarkup() {
     </div>
     <div class="state-modal-section">
       <div class="state-block-title">Constituents</div>
-      <div class="state-panel-copy">${modalLoadState.constituentsReady ? 'Click any row to open stock detail. Quote data loads on demand.' : 'Loading constituent structure…'}</div>
+      <div class="state-panel-copy">${modalLoadState.constituentsReady ? 'Click any row to open stock detail.' : 'Loading constituent structure…'}</div>
       <div class="state-modal-list">${rows}</div>
     </div>
   </section>`;
@@ -632,19 +604,14 @@ function buildStockModalMarkup() {
   const marketCap = quote ? fmtCompactNumber(quote.marketCap) : '--';
   const isLoading = Boolean(stockDetailInFlight[appState.selectedStock]);
   const metricsMarkup = isLoading && !quote
-    ? `<div class="state-stock-grid">
-        ${Array.from({ length: 4 }, () => `<div class="state-metric state-metric-skeleton">
-          <span class="section-skeleton-line section-skeleton-line-short"></span>
-          <span class="section-skeleton-line"></span>
-        </div>`).join('')}
-      </div>`
+    ? `<div class="state-stock-grid">${Array.from({ length: 4 }, () => `<div class="state-metric state-metric-skeleton"><span class="section-skeleton-line section-skeleton-line-short"></span><span class="section-skeleton-line"></span></div>`).join('')}</div>`
     : `<div class="state-stock-grid">
         <div class="state-metric"><span>Price</span><strong>${price}</strong></div>
         <div class="state-metric"><span>Change %</span><strong class="${change.cls}">${change.txt}</strong></div>
         <div class="state-metric"><span>Volume</span><strong>${volume}</strong></div>
         <div class="state-metric"><span>Market Cap</span><strong>${marketCap}</strong></div>
       </div>`;
-  return `<section class="state-modal-card state-modal-card-stock ${pendingStateTransition ? `state-modal-card-${pendingStateTransition}` : ''}" onclick="event.stopPropagation()">
+  return `<section class="state-modal-card state-modal-card-stock" onclick="event.stopPropagation()">
     <div class="state-modal-head">
       <div>
         <div class="state-backline"><button class="state-back" type="button" onclick="goToIndexDetail()">← Back to index</button><span class="state-eyebrow">STOCK DETAIL</span></div>
@@ -679,185 +646,6 @@ function renderExplorerModal() {
   </div>`;
 }
 
-function renderIndexDetail() {
-  const root = getExplorerRoot(); if (!root) return;
-  const index = INDEX_VIEW_CONFIG[appState.selectedIndex];
-  if (!index) { setState({ view: 'indices', selectedIndex: null, selectedStock: null }); return; }
-  const summary = getIndexQuoteSummary(appState.selectedIndex);
-  const rows = getConstituentRows(appState.selectedIndex).map((stock, idx) => {
-    const quote = getQuoteForKey(stock.sym);
-    const change = quote ? fmtChg(quote.change, quote.percent_change) : { txt: '--', cls: 'flat' };
-    const price = quote ? fmtPrice(quote.close || quote.price) : '--';
-    const low = Number(quote?.week52Low); const high = Number(quote?.week52High);
-    const highLow = Number.isFinite(low) && Number.isFinite(high) && low > 0 && high > 0 ? `${low.toLocaleString('en-IN', { maximumFractionDigits: 0 })} / ${high.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-- / --';
-    return `<button class="state-row" type="button" onclick="openStockDetail('${stock.sym}')">
-      <span class="state-rank">${idx + 1}</span>
-      <span class="state-name-block">
-        <span class="state-name">${escapeHtml(stock.label)}</span>
-        <span class="state-sub">${escapeHtml(stock.sector)}</span>
-      </span>
-      <span class="state-weight">${stock.weight.toFixed(1)}%</span>
-      <span class="state-price-col">${price}</span>
-      <span class="state-change ${change.cls}">${change.txt}</span>
-      <span class="state-range">${highLow}</span>
-    </button>`;
-  }).join('');
-  root.innerHTML = `<div class="${getStateShellClass()}">
-    <div class="state-shell-head">
-      <div>
-        <div class="state-backline"><button class="state-back" type="button" onclick="goToIndicesView()">← All indices</button><span class="state-eyebrow">LEVEL 2</span></div>
-        <div class="state-title">${escapeHtml(index.label)}</div>
-      </div>
-      <div class="state-shell-copy">${escapeHtml(index.note)}</div>
-    </div>
-    <div class="state-hero-line">
-      <span class="state-price">${summary.price}</span>
-      <span class="state-change ${summary.change.cls}">${summary.change.txt}</span>
-      <span class="state-inline-note">${index.constituents.length} weighted names · highest to lowest</span>
-    </div>
-    <div class="state-table-head">
-      <span>#</span><span>Name</span><span>Wt</span><span>CMP</span><span>%</span><span>52W L/H</span>
-    </div>
-    <div class="state-table">${rows}</div>
-  </div>`;
-}
-
-function renderIndexDetailView() {
-  const root = getExplorerRoot(); if (!root) return;
-  const index = INDEX_VIEW_CONFIG[appState.selectedIndex];
-  if (!index) { setState({ view: 'indices', selectedIndex: null, selectedStock: null }); return; }
-
-  const summary = getIndexQuoteSummary(appState.selectedIndex);
-  const indexQuote = getQuoteForKey(appState.selectedIndex);
-  const dayLow = Number(indexQuote?.low);
-  const dayHigh = Number(indexQuote?.high);
-  const spot = Number(indexQuote?.close || indexQuote?.price);
-  const hasDayRange = Number.isFinite(dayLow) && Number.isFinite(dayHigh) && dayHigh > dayLow;
-  const rangePct = hasDayRange && Number.isFinite(spot) ? Math.max(0, Math.min(100, ((spot - dayLow) / (dayHigh - dayLow)) * 100)) : 50;
-
-  const constituents = getConstituentRows(appState.selectedIndex);
-  const maxWeight = constituents.reduce((max, stock) => Math.max(max, Number(stock.weight) || 0), 0) || 1;
-  const constituentRows = constituents.map((stock) => {
-    const quote = getQuoteForKey(stock.sym);
-    const change = quote ? fmtChg(quote.change, quote.percent_change) : { txt: '--', cls: 'flat' };
-    const price = quote ? fmtPrice(quote.close || quote.price) : '--';
-    const width = Math.max(8, Math.min(100, (Number(stock.weight) / maxWeight) * 100));
-    return `<button class="state-bar-row" type="button" onclick="openStockDetail('${stock.sym}')">
-      <span class="state-bar-main">
-        <span class="state-name-block">
-          <span class="state-name">${escapeHtml(stock.label)}</span>
-          <span class="state-sub">${escapeHtml(stock.sector)}</span>
-        </span>
-        <span class="state-bar-weight">${stock.weight.toFixed(1)}%</span>
-      </span>
-      <span class="state-bar-track"><span class="state-bar-fill" style="width:${width}%"></span></span>
-      <span class="state-bar-meta">
-        <span class="state-price-col">${price}</span>
-        <span class="state-change ${change.cls}">${change.txt}</span>
-      </span>
-    </button>`;
-  }).join('');
-
-  const sectorWeights = constituents.reduce((acc, stock) => {
-    const sector = stock.sector || 'Other';
-    acc[sector] = (acc[sector] || 0) + (Number(stock.weight) || 0);
-    return acc;
-  }, {});
-  const sectors = Object.entries(sectorWeights).sort((a, b) => b[1] - a[1]);
-  const maxSectorWeight = sectors.reduce((max, [, percent]) => Math.max(max, percent), 0) || 1;
-  const sectorRows = sectors.map(([name, percent]) => {
-    const width = Math.max(10, Math.min(100, (percent / maxSectorWeight) * 100));
-    return `<div class="state-bar-row state-bar-row-static">
-      <span class="state-bar-main">
-        <span class="state-name-block">
-          <span class="state-name">${escapeHtml(name)}</span>
-        </span>
-        <span class="state-bar-weight">${percent.toFixed(1)}%</span>
-      </span>
-      <span class="state-bar-track"><span class="state-bar-fill state-bar-fill-sector" style="width:${width}%"></span></span>
-    </div>`;
-  }).join('');
-
-  root.innerHTML = `<div class="state-shell">
-    <div class="state-shell-head">
-      <div>
-        <div class="state-backline"><button class="state-back" type="button" onclick="goToIndicesView()">← All indices</button><span class="state-eyebrow">LEVEL 2</span></div>
-        <div class="state-title">${escapeHtml(index.label)}</div>
-      </div>
-      <div class="state-shell-copy">${escapeHtml(index.note)}</div>
-    </div>
-    <div class="state-hero-line">
-      <span class="state-price">${summary.price}</span>
-      <span class="state-change ${summary.change.cls}">${summary.change.txt}</span>
-      <span class="state-inline-note">${constituents.length} weighted names · highest to lowest${summary.stale ? ' · fallback quote' : ''}</span>
-    </div>
-    <div class="state-detail-grid">
-      <section class="state-panel">
-        <div class="state-block-title">Constituents</div>
-        <div class="state-panel-copy">Top stocks by weight. Select a row to move into stock detail.</div>
-        <div class="state-bars">${constituentRows}</div>
-      </section>
-      <section class="state-panel">
-        <div class="state-block-title">Sector Breakdown</div>
-        <div class="state-panel-copy">Clean weight view of sector concentration inside this index.</div>
-        <div class="state-bars">${sectorRows}</div>
-      </section>
-      <section class="state-panel state-panel-range">
-        <div class="state-block-title">Range</div>
-        <div class="state-panel-copy">Current position inside today's low to high range.</div>
-        <div class="state-day-range">
-          <div class="state-range-head">
-            <span>Day low</span>
-            <strong>${hasDayRange ? fmtPrice(dayLow) : '--'}</strong>
-          </div>
-          <div class="state-range-track state-range-track-main">
-            <div class="state-range-fill"></div>
-            <div class="state-range-marker" style="left:${rangePct}%"></div>
-          </div>
-          <div class="state-range-values">
-            <span>${hasDayRange ? fmtPrice(dayLow) : '--'}</span>
-            <span class="state-range-current">${summary.price}</span>
-            <span>${hasDayRange ? fmtPrice(dayHigh) : '--'}</span>
-          </div>
-          <div class="state-range-note">${hasDayRange ? 'Day low → high' : 'Range unavailable'}</div>
-        </div>
-      </section>
-    </div>
-  </div>`;
-}
-
-function renderStockDetail() {
-  const root = getExplorerRoot(); if (!root) return;
-  const meta = findStockMeta(appState.selectedStock);
-  if (!meta) { setState({ view: 'indices', selectedIndex: null, selectedStock: null }); return; }
-  const quote = stockDetailCache[appState.selectedStock];
-  const change = quote ? fmtChg(quote.change, quote.percent_change) : { txt: '--', cls: 'flat' };
-  const price = quote ? fmtPrice(quote.close || quote.price) : '--';
-  const volume = quote ? fmtCompactNumber(quote.volume) : '--';
-  const marketCap = quote ? fmtCompactNumber(quote.marketCap) : '--';
-  const isLoading = Boolean(stockDetailInFlight[appState.selectedStock]);
-  root.innerHTML = `<div class="${getStateShellClass()}">
-    <div class="state-shell-head">
-      <div>
-        <div class="state-backline"><button class="state-back" type="button" onclick="goToIndexDetail()">← Back to index</button><span class="state-eyebrow">LEVEL 3</span></div>
-        <div class="state-title">${escapeHtml(quote?.name || meta.label)}</div>
-      </div>
-      <div class="state-shell-copy">${escapeHtml(meta.sector)}${quote?.stale ? ' · fallback quote' : ''}</div>
-    </div>
-    <div class="state-hero-line">
-      <span class="state-price">${price}</span>
-      <span class="state-change ${change.cls}">${change.txt}</span>
-      <span class="state-inline-note">${isLoading ? 'Loading Yahoo quote…' : 'Live Yahoo quote'}</span>
-    </div>
-    <div class="state-stock-grid">
-      <div class="state-metric"><span>Price</span><strong>${price}</strong></div>
-      <div class="state-metric"><span>Change %</span><strong class="${change.cls}">${change.txt}</strong></div>
-      <div class="state-metric"><span>Volume</span><strong>${volume}</strong></div>
-      <div class="state-metric"><span>Market Cap</span><strong>${marketCap}</strong></div>
-    </div>
-  </div>`;
-}
-
 async function fetchStockDetail(symbol) {
   if (!symbol || stockDetailCache[symbol] || stockDetailInFlight[symbol]) return;
   stockDetailInFlight[symbol] = true;
@@ -882,12 +670,6 @@ async function fetchStockDetail(symbol) {
   }
 }
 
-function prefetchIndexConstituents(indexKey) {
-  getConstituentRows(indexKey).forEach((stock) => {
-    if (!getQuoteForKey(stock.sym)) fetchStockDetail(stock.sym);
-  });
-}
-
 function closeModal() {
   constituentsHydrationToken += 1;
   modalLoadState.constituentsReady = false;
@@ -896,7 +678,6 @@ function closeModal() {
     queueConstituentModalHydration(appState.selectedIndex);
     return;
   }
-  // FIX: Clear Right Panel default indices view
   setState({ view: 'indices', selectedIndex: null, selectedStock: null });
 }
 
@@ -904,22 +685,18 @@ function handleModalBackdropClick(event) {
   if (event.target === event.currentTarget) closeModal();
 }
 
-
 function goToIndicesView() { activeIdx = -1; setState({ view: 'indices', selectedIndex: null, selectedStock: null }); }
-function selectIndexView(indexKey) { if (!INDEX_VIEW_CONFIG[indexKey]) return; activeIdx = -1; switchRP('detail'); modalLoadState.constituentsReady = false; setState({ selectedIndex: indexKey, selectedStock: null, view: 'indexDetail' }); queueConstituentModalHydration(indexKey); }
 function openIndexDetail(indexKey) { if (!INDEX_VIEW_CONFIG[indexKey]) return; activeIdx = -1; switchRP('detail'); modalLoadState.constituentsReady = false; setState({ view: 'indexDetail', selectedIndex: indexKey, selectedStock: null }); queueConstituentModalHydration(indexKey); }
 function openStockDetail(symbol) { if (!findStockMeta(symbol)) return; activeIdx = -1; switchRP('detail'); setState({ view: 'stockDetail', selectedStock: symbol }); fetchStockDetail(symbol); }
 function goToIndexDetail() { if (appState.selectedIndex && INDEX_VIEW_CONFIG[appState.selectedIndex]) { activeIdx = -1; modalLoadState.constituentsReady = false; setState({ view: 'indexDetail', selectedStock: null }); queueConstituentModalHydration(appState.selectedIndex); return; } goToIndicesView(); }
 window.goToIndicesView = goToIndicesView;
-window.selectIndexView = selectIndexView;
 window.openIndexDetail = openIndexDetail;
 window.openStockDetail = openStockDetail;
 window.goToIndexDetail = goToIndexDetail;
 window.closeModal = closeModal;
 window.handleModalBackdropClick = handleModalBackdropClick;
 
-// ── GLOBAL DATA STORE — normalized with UPPERCASE keys ──
-// FIX: always store full uppercase-keyed global data separately from dashboard
+// ── GLOBAL DATA STORE ──
 let globalData = null;
 let globalFetching = false;
 
@@ -938,23 +715,43 @@ function tick() {
 }
 tick(); setInterval(tick, 1000);
 
-// ── RIGHT PANEL ──
+// ── RIGHT PANEL — FIXED switchRP ──────────────────────────────
 function switchRP(tab, options = {}) {
   const fetchAdviceOnOpen = options.fetchAdviceOnOpen ?? !isStartupBoot;
   currentRP = tab;
+
+  // FIX: Update tab active state using data-rp attribute
   document.querySelectorAll('.rp-tab').forEach(t => {
-    const tabKey = t.dataset.rp || (t.textContent === 'STORY' ? 'detail' : t.textContent.toLowerCase());
-    t.classList.toggle('active-rp-tab', tabKey === tab);
+    const rp = t.dataset.rp || '';
+    t.classList.toggle('active-rp-tab', rp === tab);
   });
-  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed'];
-  panels.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
-  const panelMap = { detail: 'rp-story', advice: 'rp-advice', global: 'rp-global', heatmap: 'rp-heatmap', mf: 'rp-mf', commodities: 'rp-commodities', lockin: 'rp-lockin', feargreed: 'rp-feargreed' };
+
+  // FIX: Complete panels list including earnings
+  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-earnings'];
+  panels.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+
+  // FIX: Complete panel map including earnings
+  const panelMap = {
+    detail: 'rp-story',
+    advice: 'rp-advice',
+    global: 'rp-global',
+    heatmap: 'rp-heatmap',
+    mf: 'rp-mf',
+    commodities: 'rp-commodities',
+    lockin: 'rp-lockin',
+    feargreed: 'rp-feargreed',
+    earnings: 'rp-earnings'
+  };
+
   const activePanel = document.getElementById(panelMap[tab]);
   if (activePanel) activePanel.style.display = 'block';
 
-  if (tab === 'detail') hydratePulseData();
+  // FIX: Only hydrate pulse when story panel is active AND no story is open
+  if (tab === 'detail' && activeIdx < 0) hydratePulseData();
 
-  // FIX: Global tab now always fetches from /api/global directly (uppercase keys)
   if (tab === 'global') fetchGlobal();
   if (tab === 'heatmap') fetchHeatmap();
   if (tab === 'mf') fetchMF();
@@ -962,24 +759,25 @@ function switchRP(tab, options = {}) {
   if (tab === 'lockin') fetchLockin();
   if (tab === 'advice' && fetchAdviceOnOpen) updateAdviceForTicker(currentTicker);
   if (tab === 'feargreed') fetchFearGreed();
+  if (tab === 'earnings') renderEarnings();
+
   saveLayout();
   refreshFinanceBridge();
 }
 
-// ── GLOBAL FETCH — always uses /api/global directly for correct uppercase keys ──
+// ── GLOBAL FETCH ──
 async function fetchGlobal() {
   if (globalFetching) return;
   globalFetching = true;
   try {
     const data = await fetch('/api/global').then(r => r.json());
-    globalData = data; // Store with original uppercase keys
+    globalData = data;
     renderGlobal(globalData);
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
     const glUp = document.getElementById('gl-updated');
     if (glUp) glUp.textContent = 'Updated ' + now + ' IST';
-    // Also update the bridge and pulse global metrics now that we have proper data
     refreshFinanceBridge();
-    if (currentRP === 'detail') hydratePulseData();
+    if (currentRP === 'detail' && activeIdx < 0) hydratePulseData();
   } catch (e) {
     const el = document.getElementById('gl-content');
     if (el) el.innerHTML = `<div style="color:#ff4444;font-size:13px;padding:20px">Error: ${e.message}</div>`;
@@ -988,7 +786,6 @@ async function fetchGlobal() {
   }
 }
 
-// FIX: forceGlobal now clears cache and refetches from /api/global
 function forceGlobal() { globalData = null; fetchGlobal(); }
 
 function applyTicker() {
@@ -1014,59 +811,29 @@ async function updateAdviceForTicker(t) {
     const cls = d?.cls || 'neutral'; const stance = d?.stance || 'NEUTRAL'; const m = d?.metrics || {};
     const hasRealData = Number(m.price || 0) > 0;
     if (badge) { badge.textContent = stance; badge.className = 'status-badge ' + (cls === 'bull' ? 'status-up' : cls === 'bear' ? 'status-dn' : 'status-neutral'); badge.style.cssText = ''; }
-    if (text && hasRealData) { 
-        const l = d?.levels || {}; 
-        text.textContent = `${d?.message || ''} ${key} at ${Number(m.price).toFixed(2)}.`;
-        
-        // Render dynamic advice content (Levels, Calls, etc.)
-        const dynamic = document.getElementById('advice-dynamic-content');
-        if (dynamic) {
-            let html = '';
-            
-            // Levels Section
-            if (l.support || l.resistance) {
-                html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">KEY TECHNICAL LEVELS</div>
-                <div class="adv-levels-grid" style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:20px;">
-                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 2</span>
-                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance2 || '--'}</b>
-                        <span class="status-badge status-dn" style="font-size:8px;">SELL</span>
-                    </div>
-                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 1</span>
-                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance || '--'}</b>
-                        <span class="status-badge status-neutral" style="font-size:8px;">WATCH</span>
-                    </div>
-                    <div style="background:var(--bg1);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:9px;color:var(--orange);font-weight:700;">CURRENT SPOT</span>
-                        <b style="font-size:16px;color:var(--text);font-variant-numeric:tabular-nums;">${Number(m.price).toFixed(0)}</b>
-                        <span class="status-badge status-neutral" style="font-size:8px;background:var(--line2);">HERE</span>
-                    </div>
-                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 1</span>
-                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support || '--'}</b>
-                        <span class="status-badge status-up" style="font-size:8px;">BUY</span>
-                    </div>
-                    <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 2</span>
-                        <b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support2 || '--'}</b>
-                        <span class="status-badge status-up" style="font-size:8px;">STRONG</span>
-                    </div>
-                </div>`;
-            }
-
-            // Broker Calls
-            html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">ANALYST CONTEXT</div>
-            <div style="display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);">
-                <div style="background:var(--bg2);padding:14px;">
-                    <div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:6px;text-transform:uppercase;">Institutional Intelligence</div>
-                    <p style="font-size:12px;color:var(--text);line-height:1.5;margin:0;">${stance === 'BULLISH' ? 'Accumulate on dips. Institutional flow indicates strong underlying demand near support zones.' : stance === 'BEARISH' ? 'Maintain cautious stance. Overhead supply likely to cap rallies. Hedge long positions.' : 'Market in price discovery. Wait for consolidation breaks before committing size.'}</p>
-                </div>
-            </div>`;
-            dynamic.innerHTML = html;
+    if (text && hasRealData) {
+      const l = d?.levels || {};
+      text.textContent = `${d?.message || ''} ${key} at ${Number(m.price).toFixed(2)}.`;
+      const dynamic = document.getElementById('advice-dynamic-content');
+      if (dynamic) {
+        let html = '';
+        if (l.support || l.resistance) {
+          html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">KEY TECHNICAL LEVELS</div>
+          <div class="adv-levels-grid" style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:20px;">
+            <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 2</span><b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance2 || '--'}</b><span class="status-badge status-dn" style="font-size:8px;">SELL</span></div>
+            <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:9px;color:var(--muted);font-weight:700;">RESISTANCE 1</span><b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.resistance || '--'}</b><span class="status-badge status-neutral" style="font-size:8px;">WATCH</span></div>
+            <div style="background:var(--bg1);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:9px;color:var(--orange);font-weight:700;">CURRENT SPOT</span><b style="font-size:16px;color:var(--text);font-variant-numeric:tabular-nums;">${Number(m.price).toFixed(0)}</b><span class="status-badge status-neutral" style="font-size:8px;background:var(--line2);">HERE</span></div>
+            <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 1</span><b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support || '--'}</b><span class="status-badge status-up" style="font-size:8px;">BUY</span></div>
+            <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:9px;color:var(--muted);font-weight:700;">SUPPORT 2</span><b style="font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;">${l.support2 || '--'}</b><span class="status-badge status-up" style="font-size:8px;">STRONG</span></div>
+          </div>`;
         }
-    }
-    else if (text) { _patchAdviceFromDOM(key); }
+        html += `<div class="adv-section" style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:4px;">ANALYST CONTEXT</div>
+        <div style="display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);">
+          <div style="background:var(--bg2);padding:14px;"><div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:6px;text-transform:uppercase;">Institutional Intelligence</div><p style="font-size:12px;color:var(--text);line-height:1.5;margin:0;">${stance === 'BULLISH' ? 'Accumulate on dips. Institutional flow indicates strong underlying demand near support zones.' : stance === 'BEARISH' ? 'Maintain cautious stance. Overhead supply likely to cap rallies. Hedge long positions.' : 'Market in price discovery. Wait for consolidation breaks before committing size.'}</p></div>
+        </div>`;
+        dynamic.innerHTML = html;
+      }
+    } else if (text) { _patchAdviceFromDOM(key); }
   } catch { _patchAdviceFromDOM(key); }
 }
 
@@ -1078,7 +845,6 @@ function _patchAdviceFromDOM(key) {
 }
 
 // ── FEAR & GREED ──
-// Color and label helpers
 function fngColor(score) {
   if (score >= 75) return '#00c98a';
   if (score >= 60) return '#5ec98a';
@@ -1094,19 +860,6 @@ function fngLabel(score) {
   return 'EXTREME FEAR';
 }
 
-function marketBiasColor(bias) {
-  if (bias === 'BULLISH') return '#6fc28a';
-  if (bias === 'BEARISH') return '#d27979';
-  return '#a2a2a2';
-}
-
-function overnightImpactColor(impact) {
-  if (impact === 'POSITIVE') return 'var(--text)';
-  if (impact === 'NEGATIVE') return 'var(--dim)';
-  return 'var(--muted)';
-}
-
-// Draw semi-circle gauge on canvas
 function drawFngGauge(canvasId, score, color) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -1122,74 +875,28 @@ function drawFngGauge(canvasId, score, color) {
   ctx.clearRect(0, 0, size, size * 0.65);
   const cx = size / 2, cy = size * 0.58, r = size * 0.38;
   const startAngle = Math.PI, scoreAngle = startAngle + (score / 100) * Math.PI;
-  // Track
   ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI);
   ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = size * 0.072; ctx.lineCap = 'round'; ctx.stroke();
-  // Zones
   [{ from: 0, to: .25, c: '#e4545455' }, { from: .25, to: .45, c: '#ff8a3855' }, { from: .45, to: .55, c: '#c9a84c55' }, { from: .55, to: .75, c: '#5ec98a55' }, { from: .75, to: 1, c: '#00c98a55' }].forEach(z => {
     ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI + z.from * Math.PI, Math.PI + z.to * Math.PI);
     ctx.strokeStyle = z.c; ctx.lineWidth = size * 0.068; ctx.lineCap = 'butt'; ctx.stroke();
   });
-  // Active
   ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, scoreAngle);
-  ctx.strokeStyle = 'var(--text)'; ctx.lineWidth = size * 0.072; ctx.lineCap = 'round';
-  ctx.stroke();
-  // Needle
+  ctx.strokeStyle = 'var(--text)'; ctx.lineWidth = size * 0.072; ctx.lineCap = 'round'; ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(scoreAngle) * r * .82, cy + Math.sin(scoreAngle) * r * .82);
   ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.stroke();
-  // Center dot
   ctx.beginPath(); ctx.arc(cx, cy, size * .035, 0, Math.PI * 2); ctx.fillStyle = '#e0e0e0'; ctx.fill();
-}
-
-// Draw 30-day sparkline history
-function drawFngSparkline(canvasId, history, color) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas || !history?.length) return;
-  const parent = canvas.parentElement;
-  const w = parent?.clientWidth || 300, h = 48;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-  const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-  const scores = history.map(d => Number(d.score)).filter(Number.isFinite);
-  if (scores.length < 2) return;
-  const mn = Math.min(...scores) - 5, mx = Math.max(...scores) + 5, range = mx - mn || 1;
-  const pts = scores.map((s, i) => ({ x: (i / (scores.length - 1)) * w, y: h - ((s - mn) / range) * (h - 8) - 4 }));
-  const grad = ctx.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, color + '44'); grad.addColorStop(1, color + '00');
-  ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
-  ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.stroke();
-  // End dot
-  const lp = pts[pts.length - 1];
-  ctx.beginPath(); ctx.arc(lp.x, lp.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
 }
 
 function renderSentimentLoading() {
   const panel = document.getElementById('rp-feargreed');
   if (!panel) return;
-  panel.innerHTML = `<div class="section-loading-panel">
-    <div class="section-loading-title">Sentiment</div>
-    <div class="section-skeleton-line" style="width:46%"></div>
-    <div class="section-skeleton-grid">
-      <div class="section-skeleton-card">
-        <div class="section-skeleton-line" style="width:38%"></div>
-        <div class="section-skeleton-ring"></div>
-        <div class="section-skeleton-line section-skeleton-line-short" style="width:30%"></div>
-      </div>
-      <div class="section-skeleton-card">
-        <div class="section-skeleton-line" style="width:42%"></div>
-        <div class="section-skeleton-ring"></div>
-        <div class="section-skeleton-line section-skeleton-line-short" style="width:34%"></div>
-      </div>
-    </div>
-  </div>`;
+  panel.innerHTML = `<div class="section-loading-panel"><div class="section-loading-title">Sentiment</div><div class="section-skeleton-line" style="width:46%"></div></div>`;
 }
 
 async function fetchFearGreed() {
   const panel = document.getElementById('rp-feargreed');
   if (!panel) return;
-  // Debounce — don't re-fetch if fetched within 15 min
   if (fngData && (Date.now() - fngLastFetch) < 15 * 60_000) { renderFearGreed(); return; }
   if (fngFetching) return;
   fngFetching = true;
@@ -1210,7 +917,6 @@ async function fetchFearGreed() {
 function renderFearGreed() {
   const panel = document.getElementById('rp-feargreed');
   if (!panel || !fngData) return;
-
   const global = fngData.global;
   const india = fngData.india;
   const gc = global ? fngColor(global.score) : 'var(--line2)';
@@ -1220,57 +926,42 @@ function renderFearGreed() {
   const gs = global ? Math.round(global.score) : '--';
   const is_ = india ? Math.round(india.score) : '--';
   const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
-
   panel.innerHTML = `
   <div style="padding:16px; font-family:var(--mono);">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:10px;">
       <div style="color:var(--orange);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Sentiment Dual-Feed</div>
       <span style="color:var(--dim);font-size:9px;text-transform:uppercase;">LIVE · ${now}</span>
     </div>
-
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);margin-bottom:20px;border:1px solid var(--line);">
       <div style="background:var(--bg2);padding:20px 10px;text-align:center;">
         <div style="font-size:9px;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">INDIA COMPOSITE</div>
-        <div style="position:relative; width:140px; height:80px; margin:0 auto;">
-           <canvas id="fng-gauge-india" style="width:140px;height:80px;"></canvas>
-           <div style="position:absolute; bottom:0; left:0; right:0; font-size:24px; font-weight:800; color:var(--text);">${is_}</div>
-        </div>
+        <div style="position:relative;width:140px;height:80px;margin:0 auto;"><canvas id="fng-gauge-india" style="width:140px;height:80px;"></canvas><div style="position:absolute;bottom:0;left:0;right:0;font-size:24px;font-weight:800;color:var(--text);">${is_}</div></div>
         <div style="font-size:10px;color:var(--muted);margin-top:8px;font-weight:700;letter-spacing:0.5px;">${il.toUpperCase()}</div>
       </div>
       <div style="background:var(--bg2);padding:20px 10px;text-align:center;">
         <div style="font-size:9px;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">GLOBAL US (CNN)</div>
-        <div style="position:relative; width:140px; height:80px; margin:0 auto;">
-           <canvas id="fng-gauge-global" style="width:140px;height:80px;"></canvas>
-           <div style="position:absolute; bottom:0; left:0; right:0; font-size:24px; font-weight:800; color:var(--text);">${gs}</div>
-        </div>
+        <div style="position:relative;width:140px;height:80px;margin:0 auto;"><canvas id="fng-gauge-global" style="width:140px;height:80px;"></canvas><div style="position:absolute;bottom:0;left:0;right:0;font-size:24px;font-weight:800;color:var(--text);">${gs}</div></div>
         <div style="font-size:10px;color:var(--muted);margin-top:8px;font-weight:700;letter-spacing:0.5px;">${gl.toUpperCase()}</div>
       </div>
     </div>
-
     <div style="border:1px solid var(--line);background:var(--bg1);">
       <div style="font-size:10px;color:var(--muted);background:var(--bg2);padding:10px;text-transform:uppercase;border-bottom:1px solid var(--line);font-weight:700;letter-spacing:1px;">Market Drivers</div>
       <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
         ${india?.components ? Object.entries(india.components).map(([k, comp]) => {
           const val = Number(comp.value); const cls = val > 0 ? 'status-up' : val < 0 ? 'status-dn' : 'status-neutral';
-          return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;">
-            <span style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${comp.label}</span>
-            <div class="status-badge ${cls}" style="font-size:9px;font-weight:700;min-width:60px;text-align:right;">${val >= 0 ? '+' : ''}${val.toFixed(2)}</div>
-          </div>`;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;"><span style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${comp.label}</span><div class="status-badge ${cls}" style="font-size:9px;font-weight:700;min-width:60px;text-align:right;">${val >= 0 ? '+' : ''}${val.toFixed(2)}</div></div>`;
         }).join('') : `<div style="color:var(--dim);font-size:10px;text-align:center;padding:20px;">Awaiting driver telemetry...</div>`}
       </div>
     </div>
   </div>`;
-
   setTimeout(() => {
     if (global) drawFngGauge('fng-gauge-global', global.score, gc);
     if (india) drawFngGauge('fng-gauge-india', india.score, ic);
   }, 50);
 }
 
-
 // ── HEADLINES ──
 function tagHtml(s) { return s === 'bull' ? '<span class="ntag t-bull">BULL</span>' : s === 'bear' ? '<span class="ntag t-bear">BEAR</span>' : '<span class="ntag t-watch">WATCH</span>'; }
-function storyTime() { return 'NO TIME'; }
 
 function setHeadlinesEmptyState(title, detail = '') { headlinesEmptyState = { title, detail }; }
 
@@ -1287,8 +978,8 @@ function renderHeadlines(resetScroll = false) {
   }
   countEl.textContent = currentStories.length + ' STORIES';
   currentStories.forEach((s, i) => {
-    const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : ''); d.style.animationDelay = Math.min(i * 35, 280) + 'ms';
-    const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : storyTime(i);
+    const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '');
+    const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : '';
     const srcStr = s.source ? `<span class="nl-src">${s.source}</span>` : '';
     d.innerHTML = `<div class="nl-meta">${tagHtml(s.sentiment)}<span class="nl-time">${timeStr}</span></div><div class="nl-hl">${s.headline}</div>${srcStr}`;
     d.addEventListener('click', () => showDetail(i)); list.appendChild(d);
@@ -1320,7 +1011,7 @@ function showDetail(i) {
 function clearDetail() { activeIdx = -1; renderHeadlines(); renderApp(); refreshFinanceBridge(); }
 
 function loadCategory(cat, options = {}) {
-  const shouldFetchNews = options.fetchNews ?? !isStartupBoot;
+  const shouldFetchNews = options.fetchNews !== false;
   const forceNews = options.forceNews ?? false;
   currentCat = cat; activeIdx = -1;
   document.getElementById('hl-label').textContent = cat.toUpperCase();
@@ -1361,7 +1052,8 @@ async function fetchLiveNews(cat, useCache = true) {
     sectionLoadState.news = 'error';
     currentStories = []; setHeadlinesEmptyState('Live RSS unavailable', 'The current feed could not be loaded. Try refresh or switch categories.');
     renderHeadlines(true); renderApp(); refreshFinanceBridge();
-    document.getElementById('hl-count').textContent = 'LIVE RSS UNAVAILABLE';
+    const countEl = document.getElementById('hl-count');
+    if (countEl) countEl.textContent = 'LIVE RSS UNAVAILABLE';
   } finally {
     if (newsRequestController === controller) newsRequestController = null;
   }
@@ -1371,7 +1063,9 @@ function refreshNews() { clearTimeout(refreshNewsTimer); refreshNewsTimer = setT
 
 function showNewsLoading() {
   sectionLoadState.news = 'loading';
-  const list = document.getElementById('hl-list'); list.innerHTML = ''; document.getElementById('hl-count').textContent = 'LOADING...';
+  const list = document.getElementById('hl-list'); list.innerHTML = ''; 
+  const countEl = document.getElementById('hl-count');
+  if (countEl) countEl.textContent = 'LOADING...';
   for (let i = 0; i < 6; i++) {
     const d = document.createElement('div'); d.className = 'nl';
     d.innerHTML = `<div class="section-skeleton-line" style="width:${60 + Math.random() * 30 | 0}%"></div><div class="section-skeleton-line section-skeleton-line-short" style="width:${40 + Math.random() * 40 | 0}%"></div>`;
@@ -1408,11 +1102,8 @@ function drawMiniSparkline(canvasId, series, line, fill) {
 
 function renderMiniMacroCharts() {
   const vv = miniVixSeries[miniVixSeries.length - 1]; const gv = miniGsecSeries[miniGsecSeries.length - 1];
-  const vixEl = document.getElementById('mini-vix-val'); const gsecEl = document.getElementById('mini-gsec-val');
   if (Number.isFinite(vv)) setEl('mini-vix-val', vv.toFixed(2));
-  else if (vixEl && !vixEl.classList.contains('has-data')) vixEl.textContent = '--';
   if (Number.isFinite(gv)) setEl('mini-gsec-val', gv.toFixed(3) + '%');
-  else if (gsecEl && !gsecEl.classList.contains('has-data')) gsecEl.textContent = '--';
   drawMiniSparkline('mini-vix-chart', miniVixSeries, '#ff9900', 'rgba(255,153,0,.14)');
   drawMiniSparkline('mini-gsec-chart', miniGsecSeries, '#7fd5ff', 'rgba(127,213,255,.12)');
 }
@@ -1437,7 +1128,7 @@ const TICKER_MAP = {
   'XAU/USD:Forex': { tkVal: 'tk-gold', tkChg: 'tk-gold-chg' }, 'WTI:Commodity': { tkVal: 'tk-crude', tkChg: 'tk-crude-chg' },
 };
 
-function flashCell(valId, dir) { const cell = document.getElementById(valId)?.closest('.idx-cell'); if (!cell) return; cell.classList.remove('flash-up', 'flash-dn'); void cell.offsetWidth; cell.classList.add(dir === 'up' ? 'flash-up' : 'flash-dn'); const valEl = document.getElementById(valId); if (valEl) { valEl.classList.remove('num-update'); void valEl.offsetWidth; valEl.classList.add('num-update'); } }
+function flashCell(valId, dir) { const cell = document.getElementById(valId)?.closest('.idx-cell'); if (!cell) return; cell.classList.remove('flash-up', 'flash-dn'); void cell.offsetWidth; cell.classList.add(dir === 'up' ? 'flash-up' : 'flash-dn'); }
 function fmtPrice(v) { const n = parseFloat(v); if (isNaN(n)) return '--'; return n >= 1000 ? n.toLocaleString('en-IN', { maximumFractionDigits: 1 }) : n.toFixed(2); }
 function fmtChg(c, p) { const cv = parseFloat(c), pv = parseFloat(p); if (isNaN(cv)) return { txt: '--', cls: 'flat' }; const s = cv >= 0 ? '+' : ''; return { txt: `${s}${cv.toFixed(1)} (${s}${pv.toFixed(2)}%)`, cls: cv >= 0 ? 'up' : 'dn' }; }
 function setEl(id, txt) { const e = document.getElementById(id); if (e) { e.textContent = txt; e.classList.add('has-data'); } }
@@ -1450,8 +1141,23 @@ function processLivePrices(data) {
       const price = fmtPrice(d.close || d.price); const { txt, cls } = fmtChg(d.change, d.percent_change);
       const raw = parseFloat(d.close || d.price); const chgRaw = parseFloat(d.change || 0);
       const tm = TICKER_MAP[key];
-      if (tm) { setEl(tm.tkVal, price); const te = document.getElementById(tm.tkChg); if (te) { te.textContent = txt; te.className = cls + ' has-data'; } if (tm.tkVal === 'tk-nifty') { setEl('tk-nifty2', price); const e2 = document.getElementById('tk-nifty-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } } if (tm.tkVal === 'tk-sensex') { setEl('tk-sensex2', price); const e2 = document.getElementById('tk-sensex-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } } }
-      sidebarIndices.forEach(item => { if (item.sym === key) { const prevTxt = document.getElementById(item.valId)?.textContent; setEl(item.valId, price); const ce = document.getElementById(item.chgId); if (ce) { ce.textContent = txt; ce.className = 'idx-chg has-data ' + cls; } if (prevTxt && prevTxt !== '--' && prevTxt !== price) flashCell(item.valId, cls); if (d.week52High && d.week52Low) update52WBar(item.valId, raw, d.week52Low, d.week52High); } });
+      if (tm) {
+        setEl(tm.tkVal, price);
+        const te = document.getElementById(tm.tkChg);
+        if (te) { te.textContent = txt; te.className = cls + ' has-data'; }
+        if (tm.tkVal === 'tk-nifty') { setEl('tk-nifty2', price); const e2 = document.getElementById('tk-nifty-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } }
+        if (tm.tkVal === 'tk-sensex') { setEl('tk-sensex2', price); const e2 = document.getElementById('tk-sensex-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } }
+      }
+      sidebarIndices.forEach(item => {
+        if (item.sym === key) {
+          const prevTxt = document.getElementById(item.valId)?.textContent;
+          setEl(item.valId, price);
+          const ce = document.getElementById(item.chgId);
+          if (ce) { ce.textContent = txt; ce.className = 'idx-chg has-data ' + cls; }
+          if (prevTxt && prevTxt !== '--' && prevTxt !== price) flashCell(item.valId, cls);
+          if (d.week52High && d.week52Low) update52WBar(item.valId, raw, d.week52Low, d.week52High);
+        }
+      });
       if (key.startsWith('USD/INR')) { const e = document.getElementById('m-usdinr'); if (e) { e.textContent = raw.toFixed(2) + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } }
       if (key.startsWith('XAU/USD')) { const usdInr = parseFloat(document.getElementById('m-usdinr')?.textContent) || 84; const goldInr = Math.round(raw * usdInr / 31.1035 * 10); const e = document.getElementById('m-gold'); if (e) { e.textContent = '₹' + goldInr.toLocaleString('en-IN') + '/10g'; e.className = 'mv'; } }
       if (key.startsWith('WTI')) { const e = document.getElementById('m-crude'); if (e) { e.textContent = '$' + raw.toFixed(2) + '/bbl' + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } }
@@ -1475,7 +1181,6 @@ function processMiniVix(d) {
     if (!miniGsecSeries.length && gsecHasValue) miniGsecSeries = [Number(d.spot.gsec)];
     if (vixHasValue) setEl('mini-vix-val', Number(d.spot.vix).toFixed(2));
     if (gsecHasValue) setEl('mini-gsec-val', Number(d.spot.gsec).toFixed(3) + '%');
-    // Only trust the server tag if a real value exists; otherwise force UNAVAILABLE
     if (vixTag) { const tag = vixHasValue ? (d?.meta?.vix?.tag || 'LIVE') : 'UNAVAILABLE'; vixTag.textContent = tag; vixTag.className = 'truth-tag ' + truthTagClass(tag); }
     if (gsecTag) { const tag = d?.meta?.gsec?.tag || 'DELAYED 15m'; gsecTag.textContent = tag; gsecTag.className = 'truth-tag ' + truthTagClass(tag); }
     if (vixMeta) vixMeta.textContent = vixHasValue ? (d?.meta?.vix?.source || 'NSE India VIX') : 'NSE India VIX — Awaiting data';
@@ -1485,24 +1190,6 @@ function processMiniVix(d) {
 }
 
 // ── GLOBAL MARKETS RENDER ──
-// FIX: renderGlobal now receives uppercase-keyed data directly from /api/global
-const REGIONS = [
-  { key: 'USA', label: '🇺🇸 United States', symbols: ['SP500', 'DOW', 'NASDAQ', 'VIX', 'US10Y'] },
-  { key: 'UK', label: '🇬🇧 United Kingdom', symbols: ['FTSE100', 'GBPUSD'] },
-  { key: 'EU', label: '🇪🇺 Europe', symbols: ['DAX', 'CAC40', 'EURO50', 'EURUSD'] },
-  { key: 'ASIA', label: '🌏 Asia Pacific', symbols: ['NIKKEI', 'HANGSENG', 'SHANGHAI', 'KOSPI'] },
-  { key: 'COMM', label: '📦 Commodities', symbols: ['GOLD', 'CRUDE', 'SILVER', 'NATGAS', 'DXY'] },
-];
-
-function processGlobal(data) {
-  if (!data) return;
-  globalData = data;
-  renderGlobal();
-  refreshFinanceBridge();
-  const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
-  const glUp = document.getElementById('gl-updated'); if (glUp) glUp.textContent = 'Updated ' + now + ' IST';
-}
-
 function renderGlobal() {
   const el = document.getElementById('gl-content'); if (!el || !globalData) return;
   const groups = [
@@ -1511,27 +1198,15 @@ function renderGlobal() {
     { label: 'Asia/Pacific', keys: ['NIKKEI', 'HANGSENG', 'SHANGHAI', 'KOSPI'] },
     { label: 'Commodity/FX', keys: ['GOLD', 'CRUDE', 'USDINR', 'DXY', 'US10Y'] }
   ];
-
   let html = '<div style="padding:16px; font-family:var(--mono);">';
   groups.forEach((region) => {
     const items = region.keys.map(k => globalData[k]).filter(Boolean);
     if (!items.length) return;
-    html += `
-      <div style="margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
-          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${region.label}</span>
-          <span style="font-size:9px;color:var(--dim);">REAL-TIME FEED</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `<div style="margin-bottom:20px;"><div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;"><span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${region.label}</span><span style="font-size:9px;color:var(--dim);">REAL-TIME FEED</span></div><div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:1px;background:var(--line);border:1px solid var(--line);">`;
     items.forEach(item => {
       const pct = parseFloat(item.percent_change || 0); const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : 'flat';
       const sign = pct >= 0 ? '+' : '';
-      html += `
-        <div style="background:var(--bg2);padding:12px;display:flex;flex-direction:column;gap:4px;">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;">${item.label.toUpperCase()}</div>
-          <div style="font-size:18px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${parseFloat(item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
-          <div class="${cls}" style="font-size:10px;font-weight:700;">${sign}${pct.toFixed(2)}%</div>
-        </div>`;
+      html += `<div style="background:var(--bg2);padding:12px;display:flex;flex-direction:column;gap:4px;"><div style="font-size:10px;color:var(--muted);font-weight:600;">${(item.label||'').toUpperCase()}</div><div style="font-size:18px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${parseFloat(item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div><div class="${cls}" style="font-size:10px;font-weight:700;">${sign}${pct.toFixed(2)}%</div></div>`;
     });
     html += `</div></div>`;
   });
@@ -1539,105 +1214,83 @@ function renderGlobal() {
   el.innerHTML = html;
 }
 
-setInterval(() => { if (currentRP === 'global') { fetchGlobal(); } }, 60000);
+setInterval(() => { if (currentRP === 'global') fetchGlobal(); }, 60000);
 
 // ── TICKER SEARCH ──
 const ALL_TICKERS = [
   { sym: 'NIFTY', label: 'Nifty 50' }, { sym: 'SENSEX', label: 'BSE Sensex' }, { sym: 'BANKNIFTY', label: 'Bank Nifty' },
-  { sym: 'NIFTYIT', label: 'Nifty IT' }, { sym: 'RELIANCE', label: 'Reliance Industries' }, { sym: 'TCS', label: 'Tata Consultancy' },
+  { sym: 'RELIANCE', label: 'Reliance Industries' }, { sym: 'TCS', label: 'Tata Consultancy' },
   { sym: 'INFY', label: 'Infosys' }, { sym: 'HDFCBANK', label: 'HDFC Bank' }, { sym: 'ICICIBANK', label: 'ICICI Bank' },
   { sym: 'SBIN', label: 'State Bank of India' }, { sym: 'WIPRO', label: 'Wipro' }, { sym: 'TATAMOTORS', label: 'Tata Motors' },
   { sym: 'TATASTEEL', label: 'Tata Steel' }, { sym: 'ADANIENT', label: 'Adani Enterprises' }, { sym: 'BAJFINANCE', label: 'Bajaj Finance' },
   { sym: 'MARUTI', label: 'Maruti Suzuki' }, { sym: 'AXISBANK', label: 'Axis Bank' }, { sym: 'KOTAKBANK', label: 'Kotak Mahindra' },
   { sym: 'LT', label: 'Larsen & Toubro' }, { sym: 'SUNPHARMA', label: 'Sun Pharmaceutical' }, { sym: 'HINDUNILVR', label: 'HUL' },
   { sym: 'ITC', label: 'ITC Limited' }, { sym: 'ASIANPAINT', label: 'Asian Paints' }, { sym: 'TITAN', label: 'Titan Company' },
-  { sym: 'DRREDDY', label: "Dr Reddy's" }, { sym: 'CIPLA', label: 'Cipla' }, { sym: 'COALINDIA', label: 'Coal India' },
-  { sym: 'POWERGRID', label: 'Power Grid' }, { sym: 'NTPC', label: 'NTPC' }, { sym: 'ONGC', label: 'ONGC' },
-  { sym: 'HCLTECH', label: 'HCL Technologies' }, { sym: 'TECHM', label: 'Tech Mahindra' }, { sym: 'ZOMATO', label: 'Zomato' },
-  { sym: 'INDIGO', label: 'IndiGo' }, { sym: 'DLF', label: 'DLF' }, { sym: 'BAJAJFINSV', label: 'Bajaj Finserv' },
 ];
 
 let tickerHighlight = -1;
 function showTickerDropdown(q) { const dd = document.getElementById('ticker-dropdown'); if (!dd) return; const query = q.trim().toUpperCase(); if (!query) { dd.style.display = 'none'; return; } const matches = ALL_TICKERS.filter(t => t.sym.includes(query) || t.label.toUpperCase().includes(query)).slice(0, 12); if (!matches.length) { dd.style.display = 'none'; return; } tickerHighlight = -1; dd.innerHTML = matches.map((t, i) => `<div class="td-item" data-sym="${t.sym}" onmousedown="selectTicker('${t.sym}')" onmouseover="tickerHighlight=${i};renderHighlight()"><span style="color:#ff6600;font-weight:bold;font-size:17px">${t.sym}</span><span style="color:#666;font-size:16px;margin-left:8px">${t.label}</span></div>`).join(''); dd.style.display = 'block'; }
-function renderHighlight() { document.querySelectorAll('.td-item').forEach((el, i) => { el.style.background = i === tickerHighlight ? '#1a1a2e' : (el.getAttribute('data-sym') ? '' : ''); }); }
+function renderHighlight() { document.querySelectorAll('.td-item').forEach((el, i) => { el.style.background = i === tickerHighlight ? '#1a1a2e' : ''; }); }
 function handleTickerKey(e) { const dd = document.getElementById('ticker-dropdown'); const items = dd ? dd.querySelectorAll('.td-item') : []; if (e.key === 'ArrowDown') { e.preventDefault(); tickerHighlight = Math.min(tickerHighlight + 1, items.length - 1); renderHighlight(); } else if (e.key === 'ArrowUp') { e.preventDefault(); tickerHighlight = Math.max(tickerHighlight - 1, 0); renderHighlight(); } else if (e.key === 'Enter') { if (tickerHighlight >= 0 && items[tickerHighlight]) selectTicker(items[tickerHighlight].dataset.sym); else applyTicker(); } else if (e.key === 'Escape') { dd.style.display = 'none'; } }
 function selectTicker(sym) { document.getElementById('rp-ticker').value = sym; const dd = document.getElementById('ticker-dropdown'); if (dd) dd.style.display = 'none'; applyTicker(); }
 document.addEventListener('click', e => { if (!e.target.closest('#rp-ticker-row')) { const dd = document.getElementById('ticker-dropdown'); if (dd) dd.style.display = 'none'; } });
 
 // ── HEATMAP ──
 let heatmapData = null; let heatmapSet = 'nifty';
-async function fetchHeatmap() { const el = document.getElementById('heatmap-content'); if (!el) return; heatmapSet = document.getElementById('hm-set')?.value || 'nifty'; if (heatmapData) { renderHeatmap(); return; } el.innerHTML = '<div style="color:#4CAF82;text-align:center;padding:40px;font-size:14px">Loading heatmap...</div>'; try { const res = await fetch(`/api/heatmap?set=${encodeURIComponent(heatmapSet)}`); heatmapData = await res.json(); renderHeatmap(); if (Array.isArray(heatmapData) && heatmapData.length) { const adv = heatmapData.filter(s => (s.pct || 0) > 0).length; const dec = heatmapData.filter(s => (s.pct || 0) < 0).length; renderBreadthBar(adv, dec); } } catch (e) { el.innerHTML = `<div style="color:#ff4444;padding:20px">Error: ${e.message}</div>`; } }
+async function fetchHeatmap() {
+  const el = document.getElementById('heatmap-content'); if (!el) return;
+  heatmapSet = document.getElementById('hm-set')?.value || 'nifty';
+  if (heatmapData) { renderHeatmap(); return; }
+  el.innerHTML = '<div style="color:#4CAF82;text-align:center;padding:40px;font-size:14px">Loading heatmap...</div>';
+  try {
+    const res = await fetch(`/api/heatmap?set=${encodeURIComponent(heatmapSet)}`);
+    heatmapData = await res.json();
+    renderHeatmap();
+    if (Array.isArray(heatmapData) && heatmapData.length) { const adv = heatmapData.filter(s => (s.pct || 0) > 0).length; const dec = heatmapData.filter(s => (s.pct || 0) < 0).length; renderBreadthBar(adv, dec); }
+  } catch (e) { el.innerHTML = `<div style="color:#ff4444;padding:20px">Error: ${e.message}</div>`; }
+}
 function forceHeatmap() { heatmapData = null; fetchHeatmap(); }
 function onHeatmapSetChange() { heatmapData = null; fetchHeatmap(); }
-function heatColor(pct) {
-  if (pct > 2) return { bg: '#2a2a2a', fg: '#ffffff', border: '#444' };
-  if (pct > 0) return { bg: '#1f1f1f', fg: '#e0e0e0', border: '#333' };
-  if (pct === 0) return { bg: '#121212', fg: '#888', border: '#222' };
-  if (pct > -2) return { bg: '#121212', fg: '#888', border: '#222' };
-  return { bg: '#0a0a0a', fg: '#666', border: '#1a1a1a' };
-}
 
 let dwTooltip = null;
 function ensureTooltip() { if (dwTooltip) return dwTooltip; const el = document.createElement('div'); el.className = 'dw-tooltip'; el.id = 'dw-tooltip'; document.body.appendChild(el); dwTooltip = el; return el; }
 function showTooltip(html, x, y) { const tt = ensureTooltip(); tt.innerHTML = html; const ox = 14, oy = 16; const vw = window.innerWidth, vh = window.innerHeight; tt.style.transform = `translate3d(${x + ox}px,${y + oy}px,0)`; tt.classList.add('on'); const r = tt.getBoundingClientRect(); let nx = x + ox, ny = y + oy; if (nx + r.width + 8 > vw) nx = Math.max(8, vw - r.width - 8); if (ny + r.height + 8 > vh) ny = Math.max(8, vh - r.height - 8); tt.style.transform = `translate3d(${nx}px,${ny}px,0)`; }
 function hideTooltip() { if (!dwTooltip) return; dwTooltip.classList.remove('on'); }
 
-let lastRenderedHeatmapParams = '';
 function renderHeatmap() {
   const el = document.getElementById('heatmap-content'); if (!el || !heatmapData) return;
-  const data = Array.isArray(heatmapData) ? heatmapData : (heatmapData.nifty || heatmapData.universe || heatmapData.indices || []);
-  if (!Array.isArray(data) || !data.length) { el.innerHTML = '<div style="color:var(--muted);padding:24px;font-family:var(--mono);text-align:center;">UNIVERSAL DATA UNAVAILABLE</div>'; return; }
-
-  const groupBy = document.getElementById('hm-group')?.value || 'sector'; 
-  const setName = document.getElementById('hm-set')?.value || heatmapSet || 'nifty'; 
-  const sortBy = document.getElementById('hm-sort')?.value || 'mcap'; 
+  const data = Array.isArray(heatmapData) ? heatmapData : (heatmapData.nifty || heatmapData.universe || []);
+  if (!Array.isArray(data) || !data.length) { el.innerHTML = '<div style="color:var(--muted);padding:24px;font-family:var(--mono);text-align:center;">DATA UNAVAILABLE</div>'; return; }
+  const groupBy = document.getElementById('hm-group')?.value || 'sector';
+  const sortBy = document.getElementById('hm-sort')?.value || 'mcap';
   const q = (document.getElementById('hm-q')?.value || '').trim().toLowerCase();
-  
   let filtered = data;
   if (q) filtered = data.filter(s => (s.sym || '').toLowerCase().includes(q) || (s.sector || '').toLowerCase().includes(q));
-  
-  const sorter = { mcap: (a, b) => (b.mcap - a.mcap) || (Math.abs(b.pct) - Math.abs(a.pct)), pct: (a, b) => b.pct - a.pct, sym: (a, b) => (a.sym || '').localeCompare(b.sym || '') }[sortBy] || ((a, b) => b.mcap - a.mcap);
+  const sorter = { mcap: (a, b) => (b.mcap - a.mcap), pct: (a, b) => b.pct - a.pct, sym: (a, b) => (a.sym || '').localeCompare(b.sym || '') }[sortBy] || ((a, b) => b.mcap - a.mcap);
   filtered = [...filtered].sort(sorter);
-  
-  const metaEl = document.getElementById('hm-meta'); 
-  if (metaEl) { 
-    const up = filtered.filter(s => s.pct > 0).length; 
-    const dn = filtered.filter(s => s.pct < 0).length; 
-    metaEl.textContent = `${setName.toUpperCase()} · ${filtered.length} ITEMS · ${up} UP · ${dn} DOWN`; 
-  }
-
+  const metaEl = document.getElementById('hm-meta');
+  if (metaEl) { const up = filtered.filter(s => s.pct > 0).length; const dn = filtered.filter(s => s.pct < 0).length; metaEl.textContent = `${filtered.length} ITEMS · ${up} UP · ${dn} DOWN`; }
   let html = '<div style="padding:16px; font-family:var(--mono);">';
-  if (groupBy === 'sector') { 
-    const sectors = {}; 
-    filtered.forEach(s => { const sec = s.sector || 'OTHER'; if (!sectors[sec]) sectors[sec] = []; sectors[sec].push(s); }); 
-    Object.entries(sectors).sort(([a], [b]) => a.localeCompare(b)).forEach(([sector, stocks]) => { 
-      const avg = stocks.reduce((acc, x) => acc + (x.pct || 0), 0) / Math.max(1, stocks.length); 
-      const avgSign = avg >= 0 ? '+' : ''; 
-      html += `<div style="margin-bottom:16px;">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
-          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${sector}</span>
-          <span style="font-size:10px;font-weight:700;color:${avg >= 0 ? 'var(--green)' : 'var(--red)'}">${avgSign}${avg.toFixed(2)}%</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`; 
-      stocks.forEach(s => { 
+  if (groupBy === 'sector') {
+    const sectors = {};
+    filtered.forEach(s => { const sec = s.sector || 'OTHER'; if (!sectors[sec]) sectors[sec] = []; sectors[sec].push(s); });
+    Object.entries(sectors).sort(([a], [b]) => a.localeCompare(b)).forEach(([sector, stocks]) => {
+      const avg = stocks.reduce((acc, x) => acc + (x.pct || 0), 0) / Math.max(1, stocks.length);
+      const avgSign = avg >= 0 ? '+' : '';
+      html += `<div style="margin-bottom:16px;"><div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;"><span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${sector}</span><span style="font-size:10px;font-weight:700;color:${avg >= 0 ? 'var(--green)' : 'var(--red)'}">${avgSign}${avg.toFixed(2)}%</span></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`;
+      stocks.forEach(s => {
         const pct = s.pct || 0;
         const color = pct > 1.5 ? '#00cc66' : pct > 0 ? '#007a3d' : pct < -1.5 ? '#ff4444' : pct < 0 ? '#8a2626' : 'var(--muted)';
-        html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};">
-          <div style="font-size:12px;font-weight:700;">${s.sym}</div>
-          <div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div>
-        </div>`; 
-      }); 
-      html += `</div></div>`; 
-    }); 
+        html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};"><div style="font-size:12px;font-weight:700;">${s.sym}</div><div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div></div>`;
+      });
+      html += `</div></div>`;
+    });
   } else {
     html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);">`;
     filtered.forEach(s => {
       const pct = s.pct || 0;
       const color = pct > 0 ? 'var(--green)' : pct < 0 ? 'var(--red)' : 'var(--muted)';
-      html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};">
-          <div style="font-size:12px;font-weight:700;">${s.sym}</div>
-          <div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div>
-        </div>`;
+      html += `<div style="background:var(--bg2);padding:12px 6px;text-align:center;border-left:2px solid ${color};"><div style="font-size:12px;font-weight:700;">${s.sym}</div><div style="font-size:10px;color:${color};font-weight:700;margin-top:2px;">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</div></div>`;
     });
     html += `</div>`;
   }
@@ -1664,8 +1317,6 @@ const MF_SCHEMES = [
   { code: '119131', label: 'HDFC Liquid Fund – Growth', amc: 'HDFC', cat: 'Debt', aum: 58000, er: 0.20 },
   { code: '119403', label: 'HDFC Balanced Advantage – Growth', amc: 'HDFC', cat: 'Hybrid', aum: 88000, er: 0.76 },
   { code: '120587', label: 'ICICI Pru BAF – Growth', amc: 'ICICI', cat: 'Hybrid', aum: 56000, er: 0.79 },
-  { code: '149364', label: 'Mirae Asset NYSE FANG+ FoF', amc: 'Mirae', cat: 'FoF', aum: 2800, er: 0.64, isFoF: true },
-  { code: '130408', label: 'Motilal Nasdaq 100 FoF', amc: 'Motilal', cat: 'FoF', aum: 5600, er: 0.42, isFoF: true },
 ];
 
 const ETF_LIST = [
@@ -1673,10 +1324,7 @@ const ETF_LIST = [
   { label: 'HDFC Nifty 50 ETF', amc: 'HDFC', type: 'Nifty 50', nse: 'HDFCNIFTY', er: 0.05, aum: 9800, code: '118989' },
   { label: 'SBI ETF Nifty 50', amc: 'SBI', type: 'Nifty 50', nse: 'SETFNIF50', er: 0.07, aum: 16600, code: '103504' },
   { label: 'Nippon Bank BeES', amc: 'Nippon', type: 'Bank Nifty', nse: 'BANKBEES', er: 0.19, aum: 7800, code: '119598' },
-  { label: 'Nippon IT BeES', amc: 'Nippon', type: 'Nifty IT', nse: 'ITBEES', er: 0.19, aum: 3200, code: '120503' },
   { label: 'Nippon Gold BeES', amc: 'Nippon', type: 'Gold', nse: 'GOLDBEES', er: 0.82, aum: 8400, code: '118778' },
-  { label: 'Mirae Asset NYSE FANG+', amc: 'Mirae', type: 'Global Tech', nse: 'MAFANG', er: 0.64, aum: 2800, code: '100444' },
-  { label: 'Motilal Nasdaq 100 ETF', amc: 'Motilal', type: 'Global Tech', nse: 'MOM100', er: 0.50, aum: 4100, code: '120594' },
 ];
 
 const ALL_AMCS = [...new Set([...MF_SCHEMES.map(s => s.amc), ...ETF_LIST.map(e => e.amc)])].sort();
@@ -1685,16 +1333,30 @@ let mfData = null, mfTab = 'mf', mfExpanded = '', mfView = 'card', mfAmcFilter =
 async function fetchMF() {
   if (mfData) { buildMFChips(); renderMF(); return; }
   showMFSkeleton();
-  const fetchFull = async (scheme) => { try { const r = await fetch('/api/mfapi/' + scheme.code); if (!r.ok) return null; const d = await r.json(); const h = d?.data || []; if (!h.length) return null; const latest = parseFloat(h[0]?.nav || 0); const prev = parseFloat(h[1]?.nav || latest); const chg1d = latest - prev; const pct1d = prev > 0 ? (chg1d / prev) * 100 : 0; const getH = (days) => { const target = Date.now() - days * 86400000; for (let i = h.length - 1; i >= 0; i--) { const [dd, mm, yyyy] = (h[i].date || '').split('-'); const ts = new Date(yyyy + '-' + mm + '-' + dd).getTime(); if (ts <= target) return parseFloat(h[i].nav || 0); } return 0; }; const n1 = getH(365), n3 = getH(1095), n5 = getH(1825); return { ...scheme, nav: latest, date: h[0]?.date || '', change: chg1d, pct: pct1d, ret1y: n1 > 0 ? ((latest - n1) / n1) * 100 : null, cagr3y: n3 > 0 ? (Math.pow(latest / n3, 1 / 3) - 1) * 100 : null, cagr5y: n5 > 0 ? (Math.pow(latest / n5, 1 / 5) - 1) * 100 : null, _history: h.slice(0, 30) }; } catch { return null; } };
-  const batch = async (arr, size) => { const res = []; for (let i = 0; i < arr.length; i += size) { const chunk = await Promise.all(arr.slice(i, i + size).map(fetchFull)); res.push(...chunk.filter(Boolean)); if (chunk.filter(Boolean).length) { mfData = { mfs: res, etfs: ETF_LIST.map(e => ({ ...e, price: 0, change: 0, pct: 0 })), ts: Date.now() }; buildMFChips(); renderMF(); } if (i + size < arr.length) await new Promise(r => setTimeout(r, 200)); } return res; };
-  try { const seen = new Set(); const unique = MF_SCHEMES.filter(s => { const k = s.code + '|' + s.label; if (seen.has(k)) return false; seen.add(k); return true; }); const mfs = await batch(unique, 3); mfData = { mfs, etfs: ETF_LIST.map(e => ({ ...e, price: 0, change: 0, pct: 0, _fetched: false })), ts: Date.now() }; buildMFChips(); renderMF(); fetchETFPrices(); const upd = document.getElementById('mf-last-upd'); if (upd) { const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); upd.textContent = 'NAV · ' + now + ' IST'; } } catch (e) { document.getElementById('mf-content').innerHTML = '<div style="color:#ff4444;padding:20px">Error: ' + e.message + '</div>'; }
-}
-
-async function fetchETFPrices() {
-  if (!mfData) return;
-  const promises = mfData.etfs.map(async (e) => { try { const r = await fetch('/api/mfapi/' + e.code); if (!r.ok) return; const d = await r.json(); const h = d?.data || []; if (!h.length) return; const price = parseFloat(h[0]?.nav || 0); const prev = parseFloat(h[1]?.nav || price); e.price = price; e.change = price - prev; e.pct = prev > 0 ? ((price - prev) / prev) * 100 : 0; e.date = h[0]?.date || ''; e._fetched = true; } catch { } });
-  for (let i = 0; i < promises.length; i += 3) { await Promise.all(promises.slice(i, i + 3)); await new Promise(r => setTimeout(r, 200)); }
-  if (mfTab === 'etf') renderMF();
+  const fetchFull = async (scheme) => {
+    try {
+      const r = await fetch('/api/mfapi/' + scheme.code); if (!r.ok) return null;
+      const d = await r.json(); const h = d?.data || []; if (!h.length) return null;
+      const latest = parseFloat(h[0]?.nav || 0); const prev = parseFloat(h[1]?.nav || latest);
+      const chg1d = latest - prev; const pct1d = prev > 0 ? (chg1d / prev) * 100 : 0;
+      const getH = (days) => { const target = Date.now() - days * 86400000; for (let i = h.length - 1; i >= 0; i--) { const [dd, mm, yyyy] = (h[i].date || '').split('-'); const ts = new Date(yyyy + '-' + mm + '-' + dd).getTime(); if (ts <= target) return parseFloat(h[i].nav || 0); } return 0; };
+      const n1 = getH(365), n3 = getH(1095), n5 = getH(1825);
+      return { ...scheme, nav: latest, date: h[0]?.date || '', change: chg1d, pct: pct1d, ret1y: n1 > 0 ? ((latest - n1) / n1) * 100 : null, cagr3y: n3 > 0 ? (Math.pow(latest / n3, 1 / 3) - 1) * 100 : null, cagr5y: n5 > 0 ? (Math.pow(latest / n5, 1 / 5) - 1) * 100 : null, _history: h.slice(0, 30) };
+    } catch { return null; }
+  };
+  try {
+    const mfs = [];
+    for (let i = 0; i < MF_SCHEMES.length; i += 3) {
+      const chunk = await Promise.all(MF_SCHEMES.slice(i, i + 3).map(fetchFull));
+      mfs.push(...chunk.filter(Boolean));
+      if (mfs.length) { mfData = { mfs, etfs: ETF_LIST.map(e => ({ ...e, price: 0, change: 0, pct: 0 })), ts: Date.now() }; buildMFChips(); renderMF(); }
+      if (i + 3 < MF_SCHEMES.length) await new Promise(r => setTimeout(r, 200));
+    }
+    mfData = { mfs, etfs: ETF_LIST.map(e => ({ ...e, price: 0, change: 0, pct: 0, _fetched: false })), ts: Date.now() };
+    buildMFChips(); renderMF();
+    const upd = document.getElementById('mf-last-upd');
+    if (upd) { const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); upd.textContent = 'NAV · ' + now + ' IST'; }
+  } catch (e) { const el = document.getElementById('mf-content'); if (el) el.innerHTML = '<div style="color:#ff4444;padding:20px">Error: ' + e.message + '</div>'; }
 }
 
 function forceMF() { mfData = null; mfAmcFilter.clear(); fetchMF(); }
@@ -1702,102 +1364,50 @@ function switchMFTab(tab) { mfTab = tab; mfExpanded = ''; mfLiveSearchMode = fal
 function setMFView(v) { mfView = v; document.getElementById('mf-vcard')?.classList.toggle('sc-vbtn-on', v === 'card'); document.getElementById('mf-vlist')?.classList.toggle('sc-vbtn-on', v === 'list'); renderMF(); }
 function toggleMFAmc(amc) { if (mfAmcFilter.has(amc)) mfAmcFilter.delete(amc); else mfAmcFilter.add(amc); document.querySelectorAll('.sc-chip').forEach(c => { if (c.dataset.amc === amc) c.classList.toggle('sc-chip-on', mfAmcFilter.has(amc)); }); renderMF(); }
 function buildMFChips() { const wrap = document.getElementById('mf-amc-chips'); if (!wrap) return; wrap.innerHTML = ALL_AMCS.map(a => '<span class="sc-chip' + (mfAmcFilter.has(a) ? ' sc-chip-on' : '') + '" data-amc="' + a + '" onclick="toggleMFAmc(\'' + a + '\')">' + a + '</span>').join(''); }
-function onMFSearch(val) { clearTimeout(mfSearchTimeout); const q = val.trim(); if (!q) { mfLiveSearchMode = false; renderMF(); return; } renderMF(); mfSearchTimeout = setTimeout(() => { if (q.length >= 3) mfApiSearch(q); }, 700); }
-
-async function mfApiSearch(q) {
-  const el = document.getElementById('mf-content'); const currentQ = (document.getElementById('mf-q')?.value?.trim() || ''); if (currentQ !== q) return;
-  el.innerHTML = '<div style="color:#8B7FD4;text-align:center;padding:16px;font-size:11px;letter-spacing:.6px">SEARCHING MFAPI FOR "' + q.toUpperCase() + '"...</div>';
-  try {
-    const r = await fetch('/api/mfapi/search?q=' + encodeURIComponent(q)); const results = await r.json();
-    if (!results?.length) { el.innerHTML = '<div style="color:#333;padding:20px;text-align:center">No schemes found</div>'; return; }
-    const top = results.slice(0, 16); const withNav = [];
-    for (let i = 0; i < top.length; i += 4) { const chunk = await Promise.all(top.slice(i, i + 4).map(async s => { try { const nr = await fetch('/api/mfapi/' + s.schemeCode); const nd = await nr.json(); const h = nd?.data || []; const nav = parseFloat(h[0]?.nav || 0), prev = parseFloat(h[1]?.nav || nav); const chg = nav - prev, pct = prev > 0 ? (chg / prev) * 100 : 0; const g = (days) => { const target = Date.now() - days * 86400000; for (let i = h.length - 1; i >= 0; i--) { const [dd, mm, yyyy] = (h[i].date || '').split('-'); if (new Date(yyyy + '-' + mm + '-' + dd).getTime() <= target) return parseFloat(h[i].nav || 0); } return 0; }; const n1 = g(365), n3 = g(1095), n5 = g(1825); return { label: s.schemeName, amc: s.fundHouse || '', cat: s.schemeType || '', nav, date: h[0]?.date || '', change: chg, pct, ret1y: n1 > 0 ? ((nav - n1) / n1) * 100 : null, cagr3y: n3 > 0 ? (Math.pow(nav / n3, 1 / 3) - 1) * 100 : null, cagr5y: n5 > 0 ? (Math.pow(nav / n5, 1 / 5) - 1) * 100 : null, isFoF: (s.schemeName || '').toLowerCase().includes('fof'), _history: h.slice(0, 30) }; } catch { return null; } })); withNav.push(...chunk.filter(Boolean)); await new Promise(r => setTimeout(r, 30)); }
-    if ((document.getElementById('mf-q')?.value?.trim() || '') !== q) return;
-    mfLiveSearchMode = true; renderMFCards(el, withNav, 'SEARCH: "' + q.toUpperCase() + '" — ' + withNav.length + ' FUNDS');
-  } catch (e) { el.innerHTML = '<div style="color:#ff4444;padding:20px">Search error: ' + e.message + '</div>'; }
-}
+function onMFSearch(val) { clearTimeout(mfSearchTimeout); const q = val.trim(); if (!q) { mfLiveSearchMode = false; renderMF(); return; } renderMF(); }
 
 function showMFSkeleton() {
   const el = document.getElementById('mf-content'); if (!el) return;
-  const card = (i) => '<div class="mf-tile mf-enter" style="animation-delay:' + i * 40 + 'ms"><div class="mf-skel" style="height:11px;width:70%;margin-bottom:8px"></div><div class="mf-skel" style="height:9px;width:38%;margin-bottom:12px"></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px"><div class="mf-skel" style="height:24px;border-radius:4px"></div><div class="mf-skel" style="height:24px;border-radius:4px"></div><div class="mf-skel" style="height:24px;border-radius:4px"></div></div></div>';
-  el.innerHTML = '<div style="color:#3a3a5a;font-size:10px;letter-spacing:.8px;margin-bottom:10px">FETCHING NAV DATA...</div><div class="mf-grid">' + Array.from({ length: 8 }, (_, i) => card(i)).join('') + '</div>';
+  el.innerHTML = '<div style="color:#3a3a5a;font-size:10px;letter-spacing:.8px;margin-bottom:10px">FETCHING NAV DATA...</div><div class="mf-grid">' + Array.from({ length: 4 }, (_, i) => `<div class="mf-tile" style="animation-delay:${i*40}ms"><div class="mf-skel" style="height:11px;width:70%;margin-bottom:8px"></div><div class="mf-skel" style="height:9px;width:38%;margin-bottom:12px"></div></div>`).join('') + '</div>';
 }
 
-function retColor(v) { if (v == null) return 'var(--line2)'; return v >= 20 ? 'var(--green)' : v >= 10 ? 'var(--green)' : v >= 0 ? 'var(--muted)' : 'var(--red)'; }
-function retBar(label, val, maxPct) {
-  if (val == null) return '<div class="mf-ret-bar-wrap"><span class="mf-ret-label">' + label + '</span><div class="mf-ret-track"><div class="mf-ret-fill" style="width:0%;background:#1a1a2e"></div></div><span class="mf-ret-val" style="color:#2a2a4a">—</span></div>';
-  const w = Math.min(100, Math.max(0, (val / maxPct) * 100)); const col = retColor(val); const sign = val >= 0 ? '+' : '';
-  return '<div class="mf-ret-bar-wrap"><span class="mf-ret-label">' + label + '</span><div class="mf-ret-track"><div class="mf-ret-fill" style="width:' + w + '%;background:' + col + '"></div></div><span class="mf-ret-val" style="color:' + col + '">' + sign + val.toFixed(1) + '%</span></div>';
-}
-function miniSparkSVG(history) { if (!history || history.length < 2) return ''; const navs = history.map(h => parseFloat(h.nav || 0)).filter(v => v > 0).reverse(); if (navs.length < 2) return ''; const min = Math.min(...navs), max = Math.max(...navs), rng = max - min || 1; const W = 200, H = 28; const pts = navs.map((v, i) => ((i / (navs.length - 1)) * W) + ',' + (H - ((v - min) / rng) * (H - 4) - 2)).join(' '); const col = navs[navs.length - 1] >= navs[0] ? '#00cc66' : '#ff4444'; return '<svg class="mf-sparkline" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.5" stroke-linejoin="round" opacity=".8"/></svg>'; }
+function retColor(v) { if (v == null) return 'var(--line2)'; return v >= 10 ? 'var(--green)' : v >= 0 ? 'var(--muted)' : 'var(--red)'; }
 function fmtAUM(v) { return v >= 1000 ? '₹' + (v / 1000).toFixed(1) + 'K Cr' : '₹' + v + ' Cr'; }
 
-function renderMFCardItem(m, i, kind) {
-  const cls1d = m.pct > 0 ? '#00cc66' : m.pct < 0 ? '#ff4444' : '#666'; const sign1d = m.pct >= 0 ? '+' : '';
-  const isFoF = m.isFoF || (m.cat || '').toLowerCase().includes('fof');
-  const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0);
-  const exId = kind + ':' + m.label; const open = mfExpanded === exId;
-  const fofTag = isFoF ? '<span class="mf-fof-tag">FoF</span>' : '';
-  return '<div class="mf-tile mf-enter' + (open ? ' mf-open' : '') + (isFoF ? ' mf-fof' : '') + '" style="animation-delay:' + Math.min(300, i * 14) + 'ms" onclick="toggleMFExpand(\'' + exId.replace(/'/g, "\\'") + '\')"><div class="mf-h"><div class="mf-name">' + m.label + fofTag + '</div><div class="mf-badge">' + (m.cat || m.type || '') + '</div></div><div class="mf-meta">' + (m.amc || '') + (m.date ? ' · ' + m.date : '') + '</div><div class="mf-kpis"><div class="mf-kpi"><span>' + (kind === 'ETF' ? 'PRICE' : 'NAV') + '</span><b>₹' + (navVal ? navVal.toFixed(2) : '--') + '</b></div><div class="mf-kpi center"><span>1D</span><b style="color:' + cls1d + '">' + sign1d + m.pct.toFixed(2) + '%</b></div><div class="mf-kpi right"><span>1Y RET</span><b style="color:' + retColor(m.ret1y) + '">' + (m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—') + '</b></div></div><div class="mf-ret-row">' + retBar('1Y', m.ret1y, 80) + retBar('3Y', m.cagr3y, 35) + retBar('5Y', m.cagr5y, 25) + '</div>' + (open ? '<div class="mf-extra"><div><span>AUM</span> <b>' + (m.aum ? fmtAUM(m.aum) : '—') + '</b></div><div><span>Exp. Ratio</span> <b>' + (m.er != null ? m.er.toFixed(2) + '%' : '—') + '</b></div><div><span>3Y CAGR</span> <b style="color:' + retColor(m.cagr3y) + '">' + (m.cagr3y != null ? (m.cagr3y >= 0 ? '+' : '') + m.cagr3y.toFixed(2) + '%' : '—') + '</b></div><div><span>5Y CAGR</span> <b style="color:' + retColor(m.cagr5y) + '">' + (m.cagr5y != null ? (m.cagr5y >= 0 ? '+' : '') + m.cagr5y.toFixed(2) + '%' : '—') + '</b></div>' + (kind === 'ETF' ? '<div class="mf-ex-full"><span>NSE Symbol</span> <b>' + (m.nse || '—') + '</b></div>' : '') + '<div class="mf-ex-full">' + miniSparkSVG(m._history) + '</div></div>' : '') + '</div>';
+function applyMFFilters(items) {
+  const q = (document.getElementById('mf-q')?.value || '').trim().toLowerCase();
+  const catF = document.getElementById('mf-cat')?.value || '';
+  const sortBy = document.getElementById('mf-sort')?.value || 'amc';
+  let out = [...items];
+  if (q) out = out.filter(m => (m.label || '').toLowerCase().includes(q) || (m.amc || '').toLowerCase().includes(q) || (m.cat || m.type || '').toLowerCase().includes(q));
+  if (catF) out = out.filter(m => (m.cat || m.type || '').toLowerCase().includes(catF.toLowerCase()));
+  if (mfAmcFilter.size) out = out.filter(m => mfAmcFilter.has(m.amc));
+  const sorters = { amc: (a, b) => (a.amc || '').localeCompare(b.amc || ''), nav: (a, b) => (b.nav || b.price || 0) - (a.nav || a.price || 0), ret1y: (a, b) => (b.ret1y ?? -999) - (a.ret1y ?? -999), aum: (a, b) => (b.aum || 0) - (a.aum || 0) };
+  out.sort(sorters[sortBy] || sorters.amc); return out;
 }
 
-function renderMFCards(el, items, headerTxt) {
-  if (!items.length) { el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;">No matching schemes found</div>'; return; }
-  const kind = mfTab === 'etf' ? 'ETF' : 'MF'; 
-  const cntEl = document.getElementById('mf-count'); 
-  if (cntEl) cntEl.textContent = headerTxt || items.length + ' FUNDS';
-
-  let html = '<div style="padding:16px; font-family:var(--mono);">';
-  
+function renderMF() {
+  const el = document.getElementById('mf-content'); if (!el || !mfData) return;
+  if (mfLiveSearchMode) return;
+  const pool = mfTab === 'etf' ? (mfData.etfs || []) : (mfData.mfs || []).filter(m => m?.nav);
+  const items = applyMFFilters(pool);
+  if (!items.length) { el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-family:var(--mono);">No matching schemes</div>'; return; }
+  const kind = mfTab === 'etf' ? 'ETF' : 'MF';
+  const cntEl = document.getElementById('mf-count');
+  if (cntEl) cntEl.textContent = items.length + (kind === 'ETF' ? ' ETFs' : ' FUNDS');
+  let html = '<div style="padding:16px;font-family:var(--mono);">';
   if (mfView === 'list') {
-    html += `
-      <div style="border:1px solid var(--line);background:var(--bg1);">
-        <div style="display:grid;grid-template-columns:2fr 1fr 1.2fr;background:var(--bg2);padding:8px 12px;font-size:9px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);letter-spacing:1px;">
-          <span>SCHEME</span>
-          <span style="text-align:right">NAV/PRICE</span>
-          <span style="text-align:right">1Y RET</span>
-        </div>`;
-    items.forEach((m, i) => {
-      const pct = m.pct || 0; const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : '';
+    html += `<div style="border:1px solid var(--line);background:var(--bg1);"><div style="display:grid;grid-template-columns:2fr 1fr 1fr;background:var(--bg2);padding:8px 12px;font-size:9px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);letter-spacing:1px;"><span>SCHEME</span><span style="text-align:right">NAV</span><span style="text-align:right">1Y RET</span></div>`;
+    items.forEach(m => {
       const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0);
-      html += `
-        <div style="display:grid;grid-template-columns:2fr 1fr 1.2fr;padding:12px;border-bottom:1px solid var(--line);align-items:center;">
-          <div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="font-size:11px;font-weight:700;color:var(--text);">${m.label}</div>
-            <div style="font-size:9px;color:var(--dim);text-transform:uppercase;">${m.amc || ''} · ${m.cat || m.type || ''}</div>
-          </div>
-          <div style="text-align:right;font-size:13px;font-weight:700;color:var(--text);">₹${navVal.toFixed(2)}</div>
-          <div style="text-align:right;font-size:11px;font-weight:700;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</div>
-        </div>`;
+      html += `<div style="display:grid;grid-template-columns:2fr 1fr 1fr;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center;"><div><div style="font-size:11px;font-weight:700;color:var(--text);">${m.label}</div><div style="font-size:9px;color:var(--dim);">${m.amc} · ${m.cat || m.type || ''}</div></div><div style="text-align:right;font-size:13px;font-weight:700;">₹${navVal.toFixed(2)}</div><div style="text-align:right;font-size:11px;font-weight:700;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</div></div>`;
     });
     html += '</div>';
   } else {
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;">';
-    items.forEach((m, i) => {
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">';
+    items.forEach(m => {
       const navVal = kind === 'ETF' ? (m.price || m.nav || 0) : (m.nav || 0);
-      const isFoF = m.isFoF || (m.cat || '').toLowerCase().includes('fof');
-      html += `
-        <div style="background:var(--bg2);border:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;position:relative;overflow:hidden;">
-          ${isFoF ? '<div style="position:absolute;top:0;right:0;background:var(--orange);color:#000;font-size:8px;font-weight:900;padding:2px 6px;text-transform:uppercase;">FoF</div>' : ''}
-          <div>
-            <div style="font-size:9px;color:var(--orange);font-weight:700;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">${m.amc || 'Mutual Fund'}</div>
-            <div style="font-size:12px;font-weight:700;color:var(--text);line-height:1.3;">${m.label}</div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);">
-            <div style="background:var(--bg1);padding:10px;">
-              <span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">NAV</span>
-              <b style="font-size:16px;color:var(--text);">₹${navVal.toFixed(2)}</b>
-            </div>
-            <div style="background:var(--bg1);padding:10px;">
-              <span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">1Y RET</span>
-              <b style="font-size:16px;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</b>
-            </div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-             <span style="font-size:9px;color:var(--dim);text-transform:uppercase;">${m.cat || m.type || ''}</span>
-             <span style="font-size:9px;color:var(--muted);font-weight:700;">${m.date || ''}</span>
-          </div>
-        </div>`;
+      html += `<div style="background:var(--bg2);border:1px solid var(--line);padding:14px;"><div style="font-size:9px;color:var(--orange);font-weight:700;letter-spacing:1px;margin-bottom:4px;">${m.amc}</div><div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px;">${m.label}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);"><div style="background:var(--bg1);padding:8px;"><span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">NAV</span><b style="font-size:15px;">₹${navVal.toFixed(2)}</b></div><div style="background:var(--bg1);padding:8px;"><span style="font-size:8px;color:var(--muted);display:block;margin-bottom:4px;">1Y RET</span><b style="font-size:15px;color:${retColor(m.ret1y)}">${m.ret1y != null ? (m.ret1y >= 0 ? '+' : '') + m.ret1y.toFixed(1) + '%' : '—'}</b></div></div></div>`;
     });
     html += '</div>';
   }
@@ -1805,42 +1415,27 @@ function renderMFCards(el, items, headerTxt) {
   el.innerHTML = html;
 }
 
-function applyMFFilters(items) {
-  const q = (document.getElementById('mf-q')?.value || '').trim().toLowerCase(); const catF = document.getElementById('mf-cat')?.value || ''; const sortBy = document.getElementById('mf-sort')?.value || 'amc'; let out = [...items];
-  if (q) out = out.filter(m => (m.label || '').toLowerCase().includes(q) || (m.amc || '').toLowerCase().includes(q) || (m.cat || m.type || '').toLowerCase().includes(q));
-  if (catF) out = out.filter(m => (m.cat || m.type || '').toLowerCase().includes(catF.toLowerCase()));
-  if (mfAmcFilter.size) out = out.filter(m => mfAmcFilter.has(m.amc));
-  const sorters = { amc: (a, b) => (a.amc || '').localeCompare(b.amc || '') || (a.label || '').localeCompare(b.label || ''), label: (a, b) => (a.label || '').localeCompare(b.label || ''), nav: (a, b) => (b.nav || b.price || 0) - (a.nav || a.price || 0), ret1y: (a, b) => (b.ret1y ?? -999) - (a.ret1y ?? -999), ret3y: (a, b) => (b.cagr3y ?? -999) - (a.cagr3y ?? -999), ret5y: (a, b) => (b.cagr5y ?? -999) - (a.cagr5y ?? -999), aum: (a, b) => (b.aum || 0) - (a.aum || 0), er: (a, b) => (a.er || 0) - (b.er || 0) };
-  out.sort(sorters[sortBy] || sorters.amc); return out;
-}
-
-function renderMF() { const el = document.getElementById('mf-content'); if (!el || !mfData) return; if (mfLiveSearchMode) return; const pool = mfTab === 'etf' ? (mfData.etfs || []) : (mfData.mfs || []).filter(m => m?.nav); const items = applyMFFilters(pool); renderMFCards(el, items, items.length + (mfTab === 'etf' ? ' ETFs' : ' FUNDS')); }
-function attachMFTooltips(el, kind) { el.onpointermove = (ev) => { const tile = ev.target.closest?.('.mf-tile,.mf-list-row'); if (!tile) return; const label = tile.dataset.label || '', amc = tile.dataset.amc || '', type = tile.dataset.type || ''; const pct = parseFloat(tile.dataset.pct || '0') || 0, price = parseFloat(tile.dataset.price || '0') || 0; const sign = pct >= 0 ? '+' : ''; showTooltip('<div class="dw-tt-h"><div><div class="dw-tt-sym">' + label + '</div><div class="dw-tt-sec">' + kind + ' · ' + type + (amc ? ' · ' + amc : '') + '</div></div><div style="text-align:right"><div class="dw-tt-sym" style="color:' + (pct >= 0 ? '#00cc66' : pct < 0 ? '#ff4444' : '#666') + '">' + sign + pct.toFixed(2) + '%</div></div></div><div class="dw-tt-row"><span>' + (kind === 'MF' ? 'NAV' : 'Price') + '</span><b>₹' + (price ? price.toFixed(2) : '--') + '</b></div>', ev.clientX, ev.clientY); }; el.onpointerleave = () => hideTooltip(); }
 function toggleMFExpand(id) { mfExpanded = (mfExpanded === id) ? '' : id; renderMF(); }
 
 // ── COMMODITIES ──
-const MCX_SPARK = {};
-function getMcxSpark(key, price, pct) { if (!MCX_SPARK[key]) { const pts = []; let v = price * (1 - pct / 100); for (let i = 0; i < 20; i++) { v += (price - v) * .12 + (Math.random() - .5) * price * .004; pts.push(v); } pts.push(price); MCX_SPARK[key] = pts; } return MCX_SPARK[key]; }
-function drawMcxSpark(canvas, pts, up) { if (!canvas || !pts || pts.length < 2) return; canvas.width = canvas.parentElement ? canvas.parentElement.clientWidth - 28 : 160; canvas.height = 36; const ctx = canvas.getContext('2d'); const w = canvas.width, h = canvas.height; ctx.clearRect(0, 0, w, h); const mn = Math.min(...pts), mx = Math.max(...pts), rng = (mx - mn) || 1; const xs = pts.map((_, i) => (i / (pts.length - 1)) * w); const ys = pts.map(v => h - 4 - ((v - mn) / rng) * (h - 8)); const col = up ? '#00cc66' : '#ff4444'; const grad = ctx.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, up ? 'rgba(0,204,102,.22)' : 'rgba(255,68,68,.22)'); grad.addColorStop(1, 'rgba(0,0,0,0)'); ctx.beginPath(); xs.forEach((x, i) => i === 0 ? ctx.moveTo(x, ys[i]) : ctx.lineTo(x, ys[i])); ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.stroke(); ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath(); ctx.fillStyle = grad; ctx.fill(); ctx.beginPath(); ctx.arc(xs[xs.length - 1], ys[ys.length - 1], 2.5, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill(); }
-
 async function fetchCommodities() {
   const el = document.getElementById('commodities-content'); if (!el) return;
   if (commoditiesData) { renderCommodities(); return; }
-  el.innerHTML = `<div style="color:#666;text-align:center;padding:40px;font-size:14px">Loading commodities...</div>`;
+  el.innerHTML = `<div style="color:#666;text-align:center;padding:40px;">Loading commodities...</div>`;
   try {
     const res = await fetch('/api/global'); const d = await res.json();
     const usdInrRaw = document.getElementById('m-usdinr')?.textContent || ''; const usdInr = parseFloat(usdInrRaw) || 84;
     commoditiesData = [
-      { key: 'GOLD', label: 'GOLD', unit: 'USD/oz', section: 'PRECIOUS METALS', indLabel: 'MCX Gold', indUnit: '₹/10g', data: d.GOLD, convFn: p => (p * usdInr / 31.1035 * 10), mcxNote: 'Multi Commodity Exchange' },
-      { key: 'SILVER', label: 'SILVER', unit: 'USD/oz', section: 'PRECIOUS METALS', indLabel: 'MCX Silver', indUnit: '₹/kg', data: d.SILVER, convFn: p => (p * usdInr / 31.1035 * 1000), mcxNote: 'MCX Silver Mini also available' },
-      { key: 'CRUDE', label: 'CRUDE OIL WTI', unit: 'USD/bbl', section: 'ENERGY', indLabel: 'MCX Crude', indUnit: '₹/bbl', data: d.CRUDE, convFn: p => (p * usdInr), mcxNote: 'MCX Crude (NYMEX contract)' },
-      { key: 'NATGAS', label: 'NATURAL GAS', unit: 'USD/MMBtu', section: 'ENERGY', indLabel: 'MCX Nat Gas', indUnit: '₹/MMBtu', data: d.NATGAS, convFn: p => (p * usdInr), mcxNote: 'MCX Natural Gas' },
-      { key: 'COPPER', label: 'COPPER', unit: 'USD/lb', section: 'BASE METALS', indLabel: 'MCX Copper', indUnit: '₹/kg', data: d.COPPER, convFn: p => (p * 2.20462 * usdInr / 1000 * 1000), mcxNote: 'MCX Copper (per kg)' },
-      { key: 'USDINR', label: 'USD / INR', unit: '₹ per $', section: 'FX & MACRO', indLabel: '', indUnit: '', data: { price: usdInr, percent_change: 0, change: 0 }, convFn: null, mcxNote: 'RBI reference rate' },
-      { key: 'DXY', label: 'DOLLAR INDEX', unit: 'Index', section: 'FX & MACRO', indLabel: '', indUnit: '', data: d.DXY, convFn: null, mcxNote: 'DXY basket index' },
+      { key: 'GOLD', label: 'GOLD', unit: 'USD/oz', section: 'PRECIOUS METALS', data: d.GOLD, convFn: p => (p * usdInr / 31.1035 * 10), indUnit: '₹/10g' },
+      { key: 'SILVER', label: 'SILVER', unit: 'USD/oz', section: 'PRECIOUS METALS', data: d.SILVER, convFn: p => (p * usdInr / 31.1035 * 1000), indUnit: '₹/kg' },
+      { key: 'CRUDE', label: 'CRUDE WTI', unit: 'USD/bbl', section: 'ENERGY', data: d.CRUDE, convFn: p => (p * usdInr), indUnit: '₹/bbl' },
+      { key: 'NATGAS', label: 'NATURAL GAS', unit: 'USD/MMBtu', section: 'ENERGY', data: d.NATGAS, convFn: p => (p * usdInr), indUnit: '₹/MMBtu' },
+      { key: 'COPPER', label: 'COPPER', unit: 'USD/lb', section: 'BASE METALS', data: d.COPPER, convFn: p => (p * 2.20462 * usdInr), indUnit: '₹/kg' },
+      { key: 'DXY', label: 'DOLLAR INDEX', unit: 'Index', section: 'FX & MACRO', data: d.DXY, convFn: null, indUnit: '' },
     ];
     renderCommodities();
-    const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); const upd = document.getElementById('mcx-last-upd'); if (upd) upd.textContent = 'Updated ' + now + ' IST';
+    const upd = document.getElementById('mcx-last-upd');
+    if (upd) { const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); upd.textContent = 'Updated ' + now + ' IST'; }
   } catch (e) { el.innerHTML = `<div style="color:#ff4444;padding:20px">Error: ${e.message}</div>`; }
 }
 
@@ -1848,143 +1443,82 @@ function forceCommodities() { commoditiesData = null; fetchCommodities(); }
 
 function renderCommodities() {
   const el = document.getElementById('commodities-content'); if (!el || !commoditiesData) return;
-  const sectionOrder = ['PRECIOUS METALS', 'ENERGY', 'BASE METALS', 'FX & MACRO']; 
+  const sectionOrder = ['PRECIOUS METALS', 'ENERGY', 'BASE METALS', 'FX & MACRO'];
   const sections = {};
   commoditiesData.forEach(c => { const sec = c.section || 'OTHER'; if (!sections[sec]) sections[sec] = []; sections[sec].push(c); });
-  
-  let html = '<div style="padding:16px; font-family:var(--mono);">';
+  let html = '<div style="padding:16px;font-family:var(--mono);">';
   sectionOrder.forEach((sec) => {
     const items = sections[sec]; if (!items || !items.length) return;
-    html += `
-      <div style="margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
-          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;text-transform:uppercase;">${sec}</span>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr;gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    html += `<div style="margin-bottom:20px;"><div style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">${sec}</div><div style="display:grid;grid-template-columns:1fr;gap:1px;background:var(--line);border:1px solid var(--line);">`;
     items.forEach((c) => {
       const p = parseFloat(c.data?.price || 0), pct = parseFloat(c.data?.percent_change || 0);
       const sign = pct >= 0 ? '+' : ''; const cls = pct > 0 ? 'status-up' : pct < 0 ? 'status-dn' : 'status-neutral';
       const hasMcx = c.convFn && p > 0;
       let primaryPrice = '--';
-      if (p > 0) {
-        if (hasMcx) {
-          const ip = c.convFn(p);
-          primaryPrice = ip >= 10000 ? '₹' + ip.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '₹' + ip.toFixed(2);
-        } else {
-          primaryPrice = p >= 1000 ? p.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : p.toFixed(2);
-        }
-      }
-      html += `
-        <div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;">
-          <div>
-            <div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;margin-bottom:2px;">${c.label}</div>
-            <div style="font-size:9px;color:var(--dim);text-transform:uppercase;">${hasMcx ? c.indUnit : c.unit}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:20px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${primaryPrice}</div>
-            <div class="status-badge ${cls}" style="display:inline-block;margin-top:4px;">${sign}${pct.toFixed(2)}%</div>
-          </div>
-        </div>`;
-    }); 
+      if (p > 0) { if (hasMcx) { const ip = c.convFn(p); primaryPrice = ip >= 10000 ? '₹' + ip.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '₹' + ip.toFixed(2); } else { primaryPrice = p >= 1000 ? p.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : p.toFixed(2); } }
+      html += `<div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;margin-bottom:2px;">${c.label}</div><div style="font-size:9px;color:var(--dim);">${hasMcx ? c.indUnit : c.unit}</div></div><div style="text-align:right;"><div style="font-size:20px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${primaryPrice}</div><div class="status-badge ${cls}" style="display:inline-block;margin-top:4px;">${sign}${pct.toFixed(2)}%</div></div></div>`;
+    });
     html += '</div></div>';
   });
   html += '</div>';
   el.innerHTML = html;
 }
 
-
 // ── LOCK-IN ──
 async function fetchLockin() {
   if (lockinData) { renderLockin(); return; }
   try { const res = await fetch('/api/lockin'); lockinData = await res.json(); renderLockin(); }
-  catch { const el = document.getElementById('lockin-content'); if (el) el.innerHTML = '<div style="color:#ff6666;padding:14px">Lock-in feed unavailable right now.</div>'; }
+  catch { const el = document.getElementById('lockin-content'); if (el) el.innerHTML = '<div style="color:#ff6666;padding:14px">Lock-in feed unavailable.</div>'; }
 }
 
 function renderLockin() {
   const el = document.getElementById('lockin-content'); if (!el) return;
-  const events = lockinData?.events || []; 
-  if (!events.length) { 
-    el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;">No upcoming lock-in events detected.</div>'; 
-    return; 
-  }
-  const grouped = {}; 
-  events.forEach(x => { 
-    const d = x.date ? new Date(x.date) : null; 
-    const k = d && !isNaN(d) ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'UNDATED'; 
-    if (!grouped[k]) grouped[k] = []; grouped[k].push(x); 
-  });
-  
-  let html = '<div style="padding:16px; font-family:var(--mono);">';
+  const events = lockinData?.events || [];
+  if (!events.length) { el.innerHTML = '<div style="color:var(--muted);padding:40px;text-align:center;font-size:11px;font-family:var(--mono);">No upcoming lock-in events detected.</div>'; return; }
+  const grouped = {};
+  events.forEach(x => { const d = x.date ? new Date(x.date) : null; const k = d && !isNaN(d) ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'UNDATED'; if (!grouped[k]) grouped[k] = []; grouped[k].push(x); });
+  let html = '<div style="padding:16px;font-family:var(--mono);">';
   Object.entries(grouped).forEach(([date, list]) => {
-    html += `
-      <div style="margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">
-          <span style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;">${date.toUpperCase()}</span>
-          <span style="font-size:9px;color:var(--dim);">CORPORATE ACTIONS</span>
-        </div>
-        <div style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);">`;
-    list.forEach(item => { 
-      const days = Number(item.daysLeft); 
+    html += `<div style="margin-bottom:20px;"><div style="font-size:10px;font-weight:700;color:var(--orange);letter-spacing:1px;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:12px;">${date.toUpperCase()}</div><div style="display:grid;gap:1px;background:var(--line);border:1px solid var(--line);">`;
+    list.forEach(item => {
+      const days = Number(item.daysLeft);
       const countdown = Number.isFinite(days) ? (days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'TODAY' : `${days}d left`) : '--';
       const impactCls = item.impact === 'High' ? 'status-dn' : item.impact === 'Medium' ? 'status-up' : 'status-neutral';
-      html += `
-        <div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;">
-          <div>
-            <div style="font-size:12px;font-weight:700;color:var(--text);letter-spacing:0.5px;">${item.company}</div>
-            <div style="font-size:9px;color:var(--muted);margin-top:4px;text-transform:uppercase;">${item.event} <span style="color:var(--dim)">· ${countdown}</span></div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:14px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">${item.qty || '--'}</div>
-            <div class="status-badge ${impactCls}" style="display:inline-block;margin-top:6px;">${item.impact || 'LOW'}</div>
-          </div>
-        </div>`; 
+      html += `<div style="background:var(--bg2);padding:14px;display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:12px;font-weight:700;color:var(--text);">${item.company}</div><div style="font-size:9px;color:var(--muted);margin-top:4px;">${item.event} · ${countdown}</div></div><div style="text-align:right"><div class="status-badge ${impactCls}" style="display:inline-block;">${item.impact || 'LOW'}</div></div></div>`;
     });
-    html += `</div></div>`;
+    html += '</div></div>';
   });
   html += '</div>';
   el.innerHTML = html;
 }
 
-
 // ── EARNINGS CALENDAR ──
 const EARNINGS = [
-  { date: '07 Apr', company: 'TCS', sym: 'TCS', est: 'Rev $7.1B', period: 'Q4 FY26', sector: 'IT', nse: 'TCS', ir: 'https://investors.tcs.com' },
-  { date: '10 Apr', company: 'Infosys', sym: 'INFY', est: 'Rev $4.8B', period: 'Q4 FY26', sector: 'IT', nse: 'INFY', ir: 'https://www.infosys.com/investors.html' },
-  { date: '14 Apr', company: 'HDFC Bank', sym: 'HDFCBANK', est: 'NII ₹31,400Cr', period: 'Q4 FY26', sector: 'BANK', nse: 'HDFCBANK', ir: 'https://www.hdfcbank.com' },
-  { date: '15 Apr', company: 'ICICI Bank', sym: 'ICICIBANK', est: 'NII ₹21,600Cr', period: 'Q4 FY26', sector: 'BANK', nse: 'ICICIBANK', ir: 'https://www.icicibank.com/investor-relations' },
-  { date: '19 Apr', company: 'Reliance Industries', sym: 'RELIANCE', est: 'EBITDA ₹47,000Cr', period: 'Q4 FY26', sector: 'ENERGY', nse: 'RELIANCE', ir: 'https://www.ril.com/investor-relations' },
-  { date: '25 Apr', company: 'SBI', sym: 'SBIN', est: 'NII ₹42,000Cr', period: 'Q4 FY26', sector: 'BANK', nse: 'SBIN', ir: 'https://sbi.co.in/web/investor-relations' },
-  { date: '28 Apr', company: 'Tata Motors', sym: 'TATAMOTORS', est: 'Rev ₹1,22,000Cr', period: 'Q4 FY26', sector: 'AUTO', nse: 'TATAMOTORS', ir: 'https://www.tatamotors.com/investors/' },
-  { date: '05 May', company: 'Sun Pharma', sym: 'SUNPHARMA', est: 'Rev ₹14,200Cr', period: 'Q4 FY26', sector: 'PHARMA', nse: 'SUNPHARMA', ir: 'https://www.sunpharma.com/investors' },
+  { date: '07 Apr', company: 'TCS', sym: 'TCS', est: 'Rev $7.1B', period: 'Q4 FY26', sector: 'IT' },
+  { date: '10 Apr', company: 'Infosys', sym: 'INFY', est: 'Rev $4.8B', period: 'Q4 FY26', sector: 'IT' },
+  { date: '14 Apr', company: 'HDFC Bank', sym: 'HDFCBANK', est: 'NII ₹31,400Cr', period: 'Q4 FY26', sector: 'BANK' },
+  { date: '15 Apr', company: 'ICICI Bank', sym: 'ICICIBANK', est: 'NII ₹21,600Cr', period: 'Q4 FY26', sector: 'BANK' },
+  { date: '19 Apr', company: 'Reliance Industries', sym: 'RELIANCE', est: 'EBITDA ₹47,000Cr', period: 'Q4 FY26', sector: 'ENERGY' },
+  { date: '25 Apr', company: 'SBI', sym: 'SBIN', est: 'NII ₹42,000Cr', period: 'Q4 FY26', sector: 'BANK' },
+  { date: '28 Apr', company: 'Tata Motors', sym: 'TATAMOTORS', est: 'Rev ₹1,22,000Cr', period: 'Q4 FY26', sector: 'AUTO' },
+  { date: '05 May', company: 'Sun Pharma', sym: 'SUNPHARMA', est: 'Rev ₹14,200Cr', period: 'Q4 FY26', sector: 'PHARMA' },
 ];
-const SECTOR_COLORS = { IT: '#185FA5', BANK: '#0F6E56', AUTO: '#993C1D', FMCG: '#3B6D11', PHARMA: '#534AB7', FINANCE: '#854F0B', ENERGY: '#A32D2D', INFRA: '#5F5E5A', CONGLOM: '#72243E' };
 
 function renderEarnings() {
   const el = document.getElementById('earnings-content'); if (!el) return;
   const grouped = {}; EARNINGS.forEach(e => { if (!grouped[e.date]) grouped[e.date] = []; grouped[e.date].push(e); });
   const today = new Date(); let html = '';
   Object.entries(grouped).forEach(([date, items]) => {
-    const d = new Date(date + ' 2026'); 
-    const isPast = d < today; 
-    const isToday = d.toDateString() === today.toDateString(); 
-    html += `<div style="margin-bottom:16px"><div style="font-size:10px;color:var(--dim);margin-bottom:8px;letter-spacing:0.05em;display:flex;align-items:center;gap:8px">${date.toUpperCase()}${isToday ? '<span style="color:var(--orange)">[TODAY]</span>' : ''}</div>`;
-    items.forEach(e => { 
-      html += `<div style="background:var(--bg2);border:1px solid var(--line2);border-left:2px solid var(--orange);padding:12px;margin-bottom:6px;border-radius:2px;opacity:${isPast ? 0.5 : 1}">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <b style="font-size:13px;color:var(--text)">${e.company}</b>
-          <span style="font-size:10px;color:var(--muted)">${e.period}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;">
-          <span style="color:var(--muted)">${e.sym} · ${e.sector}</span>
-          <b style="color:var(--text)">${e.est}</b>
-        </div>
-      </div>`; 
+    const d = new Date(date + ' 2026');
+    const isPast = d < today; const isToday = d.toDateString() === today.toDateString();
+    html += `<div style="margin-bottom:16px"><div style="font-size:10px;color:var(--dim);margin-bottom:8px;display:flex;align-items:center;gap:8px">${date.toUpperCase()}${isToday ? '<span style="color:var(--orange)">[TODAY]</span>' : ''}</div>`;
+    items.forEach(e => {
+      html += `<div style="background:var(--bg2);border:1px solid var(--line2);border-left:2px solid var(--orange);padding:12px;margin-bottom:6px;opacity:${isPast ? 0.5 : 1}"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><b style="font-size:13px;color:var(--text)">${e.company}</b><span style="font-size:10px;color:var(--muted)">${e.period}</span></div><div style="display:flex;justify-content:space-between;font-size:11px;"><span style="color:var(--muted)">${e.sym} · ${e.sector}</span><b style="color:var(--text)">${e.est}</b></div></div>`;
     });
     html += `</div>`;
   });
   el.innerHTML = html;
 }
-
 
 let fiiDiiData = null;
 function pickLatestFlowEntry(data, side) {
@@ -1992,60 +1526,35 @@ function pickLatestFlowEntry(data, side) {
   if (Number.isFinite(flatValue)) return { net: flatValue, date: data?.date || '' };
   const todayValue = Number(data?.today?.[`${side}_net`]);
   if (Number.isFinite(todayValue)) return { net: todayValue, date: data?.today?.date || '' };
-  const history = Array.isArray(data?.[`${side}_history`]) ? data[`${side}_history`] : Array.isArray(data?.[side]) ? data[side] : [];
-  const latest = history.find(item => Number.isFinite(Number(item?.net)));
-  if (!latest) return { net: null, date: data?.date || data?.today?.date || '' };
-  return { net: Number(latest.net), date: latest.date || data?.date || data?.today?.date || '' };
+  return { net: null, date: '' };
 }
 function processFiiDii(data) {
   try {
     if (!data) return; fiiDiiData = data;
     const fiiLatest = pickLatestFlowEntry(fiiDiiData, 'fii'); const diiLatest = pickLatestFlowEntry(fiiDiiData, 'dii');
-    const today = { fii_net: fiiLatest.net, dii_net: diiLatest.net, date: fiiLatest.date || diiLatest.date || fiiDiiData?.date || fiiDiiData?.today?.date || '' }; const fiiEl = document.getElementById('m-fii'); const diiEl = document.getElementById('m-dii');
-    if (fiiEl) {
-      if (Number.isFinite(today.fii_net)) { const v = today.fii_net; const sign = v >= 0 ? '+' : ''; fiiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; fiiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); }
-      else { fiiEl.textContent = 'Awaiting NSE EOD'; fiiEl.className = 'mv'; }
-    }
-    if (diiEl) {
-      if (Number.isFinite(today.dii_net)) { const v = today.dii_net; const sign = v >= 0 ? '+' : ''; diiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; diiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); }
-      else { diiEl.textContent = 'Awaiting NSE EOD'; diiEl.className = 'mv'; }
-    }
-    renderFiiDiiFlowBar(today);
-  } catch (e) { console.warn('FII/DII fetch failed:', e.message); }
-}
-
-function renderFiiDiiFlowBar(today) {
-  let bar = document.getElementById('fii-dii-flow-bar');
-  if (!bar) { bar = document.createElement('div'); bar.id = 'fii-dii-flow-bar'; bar.style.cssText = 'padding:8px 12px 10px;border-bottom:1px solid #0d0d18;'; const macroList = document.getElementById('macro-list'); if (macroList?.nextSibling) macroList.parentNode.insertBefore(bar, macroList.nextSibling); else if (macroList?.parentNode) macroList.parentNode.appendChild(bar); }
-  const fii = today?.fii_net ?? 0; const dii = today?.dii_net ?? 0; const total = Math.abs(fii) + Math.abs(dii) || 1; const fiiPct = (Math.abs(fii) / total * 100).toFixed(1); const diiPct = (Math.abs(dii) / total * 100).toFixed(1); const fiiSign = fii >= 0 ? '+' : '-'; const diiSign = dii >= 0 ? '+' : '-'; const fiiCls = fii >= 0 ? '#00cc66' : '#ff4444'; const diiCls = dii >= 0 ? '#00cc66' : '#ff4444'; const netFlow = fii + dii; const netSign = netFlow >= 0 ? '+' : '';
-  bar.innerHTML = `<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;letter-spacing:.5px;margin-bottom:4px"><span style="color:#554">FII <span style="color:${fiiCls}">${fiiSign}₹${Math.abs(fii).toLocaleString('en-IN', { maximumFractionDigits: 0 })}Cr</span></span><span style="color:#555;font-size:8px">NET ${netSign}₹${Math.abs(netFlow).toLocaleString('en-IN', { maximumFractionDigits: 0 })}Cr</span><span style="color:#554">DII <span style="color:${diiCls}">${diiSign}₹${Math.abs(dii).toLocaleString('en-IN', { maximumFractionDigits: 0 })}Cr</span></span></div><div class="fii-flow-bar"><div class="fii-flow-sell" id="fii-flow-sell" style="width:0%"></div><div style="flex:1;min-width:2px;background:#0d0d18"></div><div class="fii-flow-buy" id="fii-flow-buy" style="width:0%"></div></div>`;
-  requestAnimationFrame(() => { setTimeout(() => { const sellEl = document.getElementById('fii-flow-sell'); const buyEl = document.getElementById('fii-flow-buy'); if (sellEl) sellEl.style.width = (fii < 0 ? fiiPct : '0') + '%'; if (buyEl) buyEl.style.width = (dii > 0 ? diiPct : '0') + '%'; }, 200); });
+    const today = { fii_net: fiiLatest.net, dii_net: diiLatest.net, date: fiiLatest.date || diiLatest.date || '' };
+    const fiiEl = document.getElementById('m-fii'); const diiEl = document.getElementById('m-dii');
+    if (fiiEl) { if (Number.isFinite(today.fii_net)) { const v = today.fii_net; const sign = v >= 0 ? '+' : ''; fiiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; fiiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); } else { fiiEl.textContent = 'Awaiting NSE EOD'; fiiEl.className = 'mv'; } }
+    if (diiEl) { if (Number.isFinite(today.dii_net)) { const v = today.dii_net; const sign = v >= 0 ? '+' : ''; diiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; diiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); } else { diiEl.textContent = 'Awaiting NSE EOD'; diiEl.className = 'mv'; } }
+  } catch (e) { console.warn('FII/DII processing failed:', e.message); }
 }
 
 // ── BRIDGE INTEGRATION ──
-const WORLDMONITOR_STANDALONE_REMOTE_URL = 'https://finance.worldmonitor.app/?variant=finance&preset=dalal';
-const WORLDMONITOR_STANDALONE_LOCAL_URL = 'http://127.0.0.1:3200/?variant=finance&preset=dalal';
+const WORLDMONITOR_URL = /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
+  ? 'http://127.0.0.1:3200/?variant=finance&preset=dalal'
+  : 'https://finance.worldmonitor.app/?variant=finance&preset=dalal';
+
 const BRIDGE_PRESETS = {
-  macro: { route: 'macro', title: 'Macro pressure, breadth, and risk flow.', desc: 'Rates, dollar, and liquidity are driving the setup.', overlay: 'Watching macro pressure, dollar stress, and risk appetite.', mode: 'Macro Watch', themeClass: 'bridge-macro', state: {} },
-  energy: { route: 'energy', title: 'Energy shock is the first domino.', desc: 'Track crude, shipping, and inflation pressure before they bleed into India margins.', overlay: 'Watching oil, routes, freight stress, and inflation pressure.', mode: 'Energy Shock', themeClass: 'bridge-energy', state: {} },
-  china: { route: 'china', title: 'Asia and metals need a different lens.', desc: 'When China demand or Asia-wide risk starts moving metals and exporters.', overlay: 'Watching Asia growth, metals demand, and export-sensitive risk.', mode: 'China Pulse', themeClass: 'bridge-china', state: {} },
+  macro:  { route: 'macro',  title: 'Macro pressure, breadth, and risk flow.',     desc: 'Rates, dollar, and liquidity are driving the setup.', mode: 'Macro Watch',   themeClass: 'bridge-macro' },
+  energy: { route: 'energy', title: 'Energy shock is the first domino.',            desc: 'Track crude, shipping, and inflation pressure.',       mode: 'Energy Shock',  themeClass: 'bridge-energy' },
+  china:  { route: 'china',  title: 'Asia and metals need a different lens.',       desc: 'China demand and Asia risk moving metals and exporters.',mode: 'China Pulse',  themeClass: 'bridge-china' },
 };
 let bridgeGraphSeries = []; let bridgeGraphMode = 'macro'; let bridgeGraphTimer = null;
 
 function getBridgeStory() { if (Array.isArray(currentStories) && currentStories.length) { if (activeIdx >= 0 && currentStories[activeIdx]) return currentStories[activeIdx]; return currentStories[0]; } return null; }
-function parseBridgeNumber(value) { const cleaned = String(value || '').replace(/[^0-9.\-]/g, ''); const parsed = parseFloat(cleaned); return Number.isFinite(parsed) ? parsed : null; }
-function getWorldMonitorStandaloneUrl() { return /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname) ? WORLDMONITOR_STANDALONE_LOCAL_URL : WORLDMONITOR_STANDALONE_REMOTE_URL; }
+function getWorldMonitorStandaloneUrl() { return WORLDMONITOR_URL; }
 window.getWorldMonitorStandaloneUrl = getWorldMonitorStandaloneUrl;
-function inferFinanceBridgePreset(routeOverride) {
-  const forcedRoute = routeOverride || manualPulseRoute; if (forcedRoute && BRIDGE_PRESETS[forcedRoute]) return BRIDGE_PRESETS[forcedRoute];
-  const story = getBridgeStory(); const bag = [currentCat, currentRP, currentTicker, story?.headline || '', story?.body || '', ...(story?.tags || [])].join(' ').toLowerCase();
-  if (/crude|oil|hormuz|iran|israel|shipping|strait|sanction|airline|paint|energy/.test(bag)) return BRIDGE_PRESETS.energy;
-  if (/china|metal|steel|copper|asia|export|hang seng|nikkei|yuan|commodity/.test(bag)) return BRIDGE_PRESETS.china;
-  return BRIDGE_PRESETS.macro;
-}
-function setDalalPulseMode(route) { manualPulseRoute = BRIDGE_PRESETS[route] ? route : null; refreshFinanceBridge(); }
-window.setDalalPulseMode = setDalalPulseMode;
-function openWorldMonitorStandalone() { window.open(getWorldMonitorStandaloneUrl(), '_blank', 'noopener'); }
+function openWorldMonitorStandalone() { window.open(WORLDMONITOR_URL, '_blank', 'noopener'); }
 window.openWorldMonitorStandalone = openWorldMonitorStandalone;
 function showWorldMonitorFinance() { openWorldMonitorStandalone(); }
 window.showWorldMonitorFinance = showWorldMonitorFinance;
@@ -2060,83 +1569,69 @@ function drawFinanceBridgeGraph() {
   const min = Math.min(...bridgeGraphSeries) - 4; const max = Math.max(...bridgeGraphSeries) + 4; const range = Math.max(8, max - min);
   const lineColor = bridgeGraphMode === 'energy' ? '#ff8a38' : bridgeGraphMode === 'china' ? '#5ec9ff' : '#8e84ff';
   const fillColor = bridgeGraphMode === 'energy' ? '255,102,0' : bridgeGraphMode === 'china' ? '105,200,255' : '142,132,255';
-  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1; for (let i = 1; i <= 3; i++) { const y = (height / 4) * i; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) { const y = (height / 4) * i; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
   ctx.beginPath(); bridgeGraphSeries.forEach((value, index) => { const x = (index / (bridgeGraphSeries.length - 1)) * width; const y = height - ((value - min) / range) * (height - 12) - 6; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
   const gradient = ctx.createLinearGradient(0, 0, 0, height); gradient.addColorStop(0, `rgba(${fillColor},0.28)`); gradient.addColorStop(1, `rgba(${fillColor},0)`);
   ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
   ctx.beginPath(); bridgeGraphSeries.forEach((value, index) => { const x = (index / (bridgeGraphSeries.length - 1)) * width; const y = height - ((value - min) / range) * (height - 12) - 6; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.shadowBlur = 14; ctx.shadowColor = lineColor; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.shadowBlur = 0; ctx.stroke();
   const lastY = height - ((bridgeGraphSeries[bridgeGraphSeries.length - 1] - min) / range) * (height - 12) - 6;
   ctx.beginPath(); ctx.arc(width, lastY, 3, 0, Math.PI * 2); ctx.fillStyle = '#fff3da'; ctx.fill();
 }
 
 function tickFinanceBridgeGraph() {
   const preset = inferFinanceBridgePreset(); bridgeGraphMode = preset.route;
-  const drift = preset.route === 'energy' ? .35 : preset.route === 'china' ? -.05 : .12;
   const last = bridgeGraphSeries.length ? bridgeGraphSeries[bridgeGraphSeries.length - 1] : 100;
-  const next = last + drift + (Math.random() - .5) * (preset.route === 'energy' ? 2.2 : 1.5);
+  const next = last + 0.1 + (Math.random() - .5) * 2;
   bridgeGraphSeries.push(next); if (bridgeGraphSeries.length > 42) bridgeGraphSeries.shift(); drawFinanceBridgeGraph();
 }
 
 function initFinanceBridgeGraph() { if (bridgeGraphTimer) return; drawFinanceBridgeGraph(); bridgeGraphTimer = setInterval(tickFinanceBridgeGraph, 1200); window.addEventListener('resize', drawFinanceBridgeGraph); }
-function initFinanceBridgeMotion() {
-  // Bridge: Removed GSAP animations for utilitarian feel
-}
-
 
 function animateCollection(selector, options = {}) {
-  // Bridge: High-performance instant rendering
   const nodes = document.querySelectorAll(selector);
-  nodes.forEach(n => {
-    n.style.opacity = '1';
-    n.style.transform = 'none';
-  });
+  nodes.forEach(n => { n.style.opacity = '1'; n.style.transform = 'none'; });
 }
 
+function inferFinanceBridgePreset(routeOverride) {
+  const forcedRoute = routeOverride || manualPulseRoute; if (forcedRoute && BRIDGE_PRESETS[forcedRoute]) return BRIDGE_PRESETS[forcedRoute];
+  const story = getBridgeStory(); const bag = [currentCat, currentRP, currentTicker, story?.headline || ''].join(' ').toLowerCase();
+  if (/crude|oil|hormuz|iran|israel|shipping|strait|energy/.test(bag)) return BRIDGE_PRESETS.energy;
+  if (/china|metal|steel|copper|asia|export|hang seng|nikkei/.test(bag)) return BRIDGE_PRESETS.china;
+  return BRIDGE_PRESETS.macro;
+}
+
+function setDalalPulseMode(route) { manualPulseRoute = BRIDGE_PRESETS[route] ? route : null; refreshFinanceBridge(); }
+window.setDalalPulseMode = setDalalPulseMode;
 
 function refreshFinanceBridge() {
   const root = document.getElementById('wm-bridge'); if (!root) return;
   const preset = inferFinanceBridgePreset();
   root.classList.remove('bridge-macro', 'bridge-energy', 'bridge-china'); root.classList.add(preset.themeClass);
-  const story = getBridgeStory();
-  const titleEl = document.getElementById('wm-bridge-title'); const descEl = document.getElementById('wm-bridge-desc'); const modeEl = document.getElementById('wm-bridge-mode');
+  const titleEl = document.getElementById('wm-bridge-title'); const descEl = document.getElementById('wm-bridge-desc');
   if (titleEl) titleEl.textContent = preset.title;
-  if (descEl) { const extra = story?.headline ? ` Active trigger: ${story.headline.slice(0, 110)}${story.headline.length > 110 ? '…' : ''}` : ''; descEl.textContent = preset.desc + extra; }
-  if (modeEl) modeEl.textContent = preset.mode;
-  const niftyEl = document.getElementById('wm-bridge-nifty'); if (niftyEl) niftyEl.textContent = document.getElementById('s-nifty')?.textContent || '--';
-  const usdEl = document.getElementById('wm-bridge-usdinr');
-  if (usdEl) { const usdInr = parseBridgeNumber(document.getElementById('m-usdinr')?.textContent); usdEl.textContent = Number.isFinite(usdInr) ? usdInr.toFixed(2) : '--'; }
-  const topLaunch = document.getElementById('wm-top-launch'); if (topLaunch) { topLaunch.textContent = 'REFRESH NOW'; topLaunch.classList.remove('is-live'); }
+  if (descEl) { const story = getBridgeStory(); const extra = story?.headline ? ` Active: ${story.headline.slice(0, 100)}…` : ''; descEl.textContent = preset.desc + extra; }
   updateFinanceBridgeCards(preset.route); bridgeGraphMode = preset.route; drawFinanceBridgeGraph();
 }
 window.refreshFinanceBridge = refreshFinanceBridge;
 
 // ── FOCUS MODE ──
-// FIX: Default is FALSE — terminal opens normally, user can enable focus mode manually
-let dalalFocusMode = JSON.parse(localStorage.getItem('dw-focus-mode') || 'false');
-
-// Clear any stale 'true' value that caused it to always open in focus mode
-if (dalalFocusMode === true) {
-  // Only keep focus mode if user explicitly set it THIS session — reset on fresh load
-  // Comment out the next line if you WANT focus mode to persist across sessions
-  dalalFocusMode = false;
-  localStorage.setItem('dw-focus-mode', 'false');
-}
+let dalalFocusMode = false; // FIX: always start false, never persist
 
 function applyDalalFocusMode() {
   document.body.classList.toggle('dalal-focus-mode', dalalFocusMode);
   document.getElementById('bb')?.classList.toggle('dalal-focus-mode', dalalFocusMode);
   const btn = document.getElementById('dw-focus-toggle');
-  if (btn) { btn.textContent = dalalFocusMode ? 'EXIT FOCUS' : 'TERMINAL FOCUS'; btn.classList.toggle('is-active', dalalFocusMode); btn.setAttribute('aria-pressed', dalalFocusMode ? 'true' : 'false'); }
+  if (btn) { btn.textContent = dalalFocusMode ? 'EXIT FOCUS' : 'TERMINAL FOCUS'; btn.classList.toggle('is-active', dalalFocusMode); }
   const escHint = document.getElementById('focus-esc-hint');
-  if (escHint) { escHint.classList.toggle('is-visible', dalalFocusMode); escHint.setAttribute('aria-hidden', dalalFocusMode ? 'false' : 'true'); }
+  if (escHint) { escHint.classList.toggle('is-visible', dalalFocusMode); }
 }
 
 function toggleDalalFocusMode(force) {
   dalalFocusMode = typeof force === 'boolean' ? force : !dalalFocusMode;
-  localStorage.setItem('dw-focus-mode', JSON.stringify(dalalFocusMode));
   applyDalalFocusMode();
-  if (!dalalFocusMode && !bridgeGraphTimer) { initFinanceBridgeGraph(); initFinanceBridgeMotion(); refreshFinanceBridge(); }
+  if (!dalalFocusMode && !bridgeGraphTimer) { initFinanceBridgeGraph(); refreshFinanceBridge(); }
 }
 window.toggleDalalFocusMode = toggleDalalFocusMode;
 
@@ -2147,15 +1642,19 @@ function restoreLayout() {
     const saved = JSON.parse(localStorage.getItem('dw-layout') || '{}');
     const cat = saved.cat || 'market';
     let rp = saved.rp || 'detail';
-    if (rp === 'charts' || rp === 'wm' || rp === 'earnings') rp = 'detail';
-    const ticker = saved.ticker || 'NIFTY';
-    loadCategory(cat, { fetchNews: false }); switchRP(rp, { fetchAdviceOnOpen: false });
-    if (ticker !== 'NIFTY') currentTicker = ticker;
-  } catch (e) { loadCategory('market', { fetchNews: false }); }
+    if (rp === 'charts' || rp === 'wm' || rp === 'earnings') rp = 'detail'; // safe fallback
+    currentCat = cat;
+    currentRP = rp;
+    if (saved.ticker) currentTicker = saved.ticker;
+    // Update chip active state
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active-chip', c.textContent.toLowerCase() === cat));
+    // Update tab active state
+    document.querySelectorAll('.rp-tab').forEach(t => t.classList.toggle('active-rp-tab', t.dataset.rp === rp));
+  } catch (e) { }
 }
 
 // ── KEYBOARD SHORTCUTS ──
-const KEY_HELP = [['R', 'Refresh news'], ['M', 'Market news'], ['B', 'Banks news'], ['S', 'Sectors news'], ['A', 'mAcro news'], ['T', 'sTocks news'], ['G', 'Global news'], ['1', 'Story panel'], ['2', 'Advice panel'], ['3', 'Global markets'], ['4', 'Heatmap'], ['5', 'MF / ETF'], ['6', 'Commodities'], ['7', 'Lock-in'], ['8', 'Sentiment / F&G'], ['/', 'Focus search'], ['Esc', 'Clear / close'], ['↑↓', 'Navigate headlines'], ['?', 'Toggle shortcut help']];
+const KEY_HELP = [['R','Refresh news'],['M','Market'],['B','Banks'],['S','Sectors'],['A','Macro'],['T','Stocks'],['G','Global'],['1','Story'],['2','Advice'],['3','Global markets'],['4','Heatmap'],['5','MF/ETF'],['6','Commodities'],['7','Lock-in'],['8','Sentiment'],['?','Help']];
 let helpVisible = false;
 function toggleHelp() {
   helpVisible = !helpVisible; let el = document.getElementById('kb-help');
@@ -2167,248 +1666,196 @@ function toggleHelp() {
 
 document.addEventListener('keydown', e => {
   const tag = e.target.tagName; const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
-  if (e.key === 'Escape') { if (helpVisible) { toggleHelp(); return; } if (dalalFocusMode) { toggleDalalFocusMode(false); return; } const q = document.getElementById('q-input'); if (q && q.value) { q.value = ''; loadCategory(currentCat); return; } if (activeIdx >= 0) { clearDetail(); return; } const dd = document.getElementById('ticker-dropdown'); if (dd && dd.style.display !== 'none') { dd.style.display = 'none'; return; } return; }
+  if (e.key === 'Escape') {
+    if (helpVisible) { toggleHelp(); return; }
+    if (dalalFocusMode) { toggleDalalFocusMode(false); return; }
+    const q = document.getElementById('q-input'); if (q && q.value) { q.value = ''; loadCategory(currentCat); return; }
+    if (activeIdx >= 0) { clearDetail(); return; }
+    return;
+  }
   if (e.key === '?' && !inInput) { toggleHelp(); return; }
   if (inInput) return;
   const catMap = { m: 'market', b: 'banks', s: 'sectors', a: 'macro', t: 'stocks', g: 'global' };
   if (catMap[e.key.toLowerCase()] && !e.ctrlKey && !e.metaKey) { loadCategory(catMap[e.key.toLowerCase()]); return; }
   if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) { refreshNews(); return; }
-  // Updated panel shortcuts — 8 = Fear & Greed
   const rpMap = { '1': 'detail', '2': 'advice', '3': 'global', '4': 'heatmap', '5': 'mf', '6': 'commodities', '7': 'lockin', '8': 'feargreed' };
   if (rpMap[e.key]) { switchRP(rpMap[e.key]); return; }
   if (e.key === '/') { e.preventDefault(); document.getElementById('q-input')?.focus(); return; }
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const len = currentStories.length; if (!len) return; if (e.key === 'ArrowDown') activeIdx = Math.min(activeIdx + 1, len - 1); else activeIdx = Math.max(activeIdx - 1, 0); showDetail(activeIdx); const items = document.querySelectorAll('.nl'); if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: 'nearest' }); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); const len = currentStories.length; if (!len) return;
+    if (e.key === 'ArrowDown') activeIdx = Math.min(activeIdx + 1, len - 1);
+    else activeIdx = Math.max(activeIdx - 1, 0);
+    showDetail(activeIdx);
+    const items = document.querySelectorAll('.nl'); if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: 'nearest' });
+    return;
+  }
 });
 
 function applyBridgeLaunchState() {
   const params = new URLSearchParams(window.location.search); if (!params.toString()) return;
-  const nextCat = (params.get('cat') || '').trim().toLowerCase(); const nextRP = (params.get('rp') || '').trim().toLowerCase(); const nextPulse = (params.get('pulse') || '').trim().toLowerCase(); const focusMode = params.get('focus');
-  const validCats = new Set(['market', 'banks', 'sectors', 'macro', 'stocks', 'global']); const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed']);
-  if (validCats.has(nextCat)) loadCategory(nextCat, { fetchNews: false });
-  if (validRPs.has(nextRP)) switchRP(nextRP, { fetchAdviceOnOpen: false });
-  if (BRIDGE_PRESETS[nextPulse]) setDalalPulseMode(nextPulse);
-  // FIX: Don't auto-enable focus mode from URL params
-  // if(focusMode==='terminal'&&!dalalFocusMode){ dalalFocusMode=true; localStorage.setItem('dw-focus-mode',JSON.stringify(dalalFocusMode)); }
-  if (params.get('bridge') || nextCat || nextRP || nextPulse) { const cleanUrl = window.location.pathname + window.location.hash; window.history.replaceState({}, '', cleanUrl); }
+  const nextCat = (params.get('cat') || '').trim().toLowerCase();
+  const nextRP = (params.get('rp') || '').trim().toLowerCase();
+  const nextPulse = (params.get('pulse') || '').trim().toLowerCase();
+  const validCats = new Set(['market', 'banks', 'sectors', 'macro', 'stocks', 'global']);
+  const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'earnings']);
+  if (validCats.has(nextCat)) currentCat = nextCat;
+  if (validRPs.has(nextRP)) currentRP = nextRP;
+  if (BRIDGE_PRESETS[nextPulse]) manualPulseRoute = nextPulse;
+  if (params.toString()) { window.history.replaceState({}, '', window.location.pathname); }
 }
 
-// ── INIT ──
-let bootSplashDismissed = false;
-function dismissBootSplash() {
-  if (bootSplashDismissed) return;
-  bootSplashDismissed = true;
-  const splash = document.getElementById('boot-splash');
-  if (!splash) return;
-  splash.style.transition = 'opacity .16s ease';
-  splash.style.opacity = '0';
-  splash.style.pointerEvents = 'none';
-  setTimeout(() => splash.remove(), 180);
-}
-
-restoreLayout();
-setTimeout(dismissBootSplash, 300);
-applyBridgeLaunchState();
-applyDalalFocusMode();
-if (!dalalFocusMode) { initFinanceBridgeGraph(); initFinanceBridgeMotion(); }
-
-renderMiniMacroCharts();
-renderEarnings();
-
-let indicesFastFetching = false; let dashboardSlowFetching = false; let dashFetching = false; let refreshCountdown = 10;
-const DASHBOARD_HEALTH_KEYS = ['NIFTY:NSE', 'SENSEX:BSE', 'BANKNIFTY:NSE', 'USD/INR:Forex', 'WTI:Commodity'];
-
-function getDashboardHealth(quotes = {}) {
-  const keys = DASHBOARD_HEALTH_KEYS.filter((key) => quotes[key]);
-  if (!keys.length) return { fullFallback: false, partialFallback: false, staleCount: 0, total: 0 };
-  const staleCount = keys.filter((key) => quotes[key]?.stale).length;
-  return {
-    fullFallback: staleCount === keys.length,
-    partialFallback: staleCount > 0 && staleCount < keys.length,
-    staleCount,
-    total: keys.length
-  };
-}
+// ── INIT — FIXED BOOT SEQUENCE ──
+let indicesFastFetching = false; let dashboardSlowFetching = false;
+let refreshCountdown = 30;
+const DASHBOARD_HEALTH_KEYS = ['NIFTY:NSE', 'SENSEX:BSE', 'BANKNIFTY:NSE'];
 
 function applyDashboardHealthLabel(quotes = {}) {
-  const lu = document.getElementById('last-updated');
-  if (!lu) return;
+  const lu = document.getElementById('last-updated'); if (!lu) return;
   const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
-  const health = getDashboardHealth(quotes);
-  const label = health.fullFallback ? 'FALLBACK ' : health.partialFallback ? 'PARTIAL ' : 'UPDATED ';
+  const staleCount = DASHBOARD_HEALTH_KEYS.filter(k => quotes[k]?.stale).length;
+  const label = staleCount === DASHBOARD_HEALTH_KEYS.length ? 'FALLBACK ' : staleCount > 0 ? 'PARTIAL ' : 'UPDATED ';
   lu.textContent = label + now + ' IST';
-  lu.style.color = health.fullFallback ? '#ff9900' : health.partialFallback ? '#d7b36b' : '#7fd5ff';
+  lu.style.color = staleCount === DASHBOARD_HEALTH_KEYS.length ? '#ff9900' : staleCount > 0 ? '#d7b36b' : '#7fd5ff';
 }
 
-function scheduleDashboardSlowLoad(delay = 180) {
-  if (slowBootScheduled || dashboardSlowFetching) return;
-  slowBootScheduled = true;
-  setTimeout(() => {
-    slowBootScheduled = false;
-    fetchDashboardSlowData();
-  }, delay);
+function scheduleDashboardSlowLoad(delay = 200) {
+  setTimeout(() => { fetchDashboardSlowData(); }, delay);
 }
 
 async function fetchIndicesFastData() {
   if (indicesFastFetching) return; indicesFastFetching = true;
-  if (indicesFastController) {
-    try { indicesFastController.abort(); } catch {}
-  }
-  const controller = new AbortController();
-  indicesFastController = controller;
+  if (indicesFastController) { try { indicesFastController.abort(); } catch {} }
+  const controller = new AbortController(); indicesFastController = controller;
   try {
-    const res = await fetch('/api/indices-fast', { signal: controller.signal }); if (!res.ok) throw new Error('HTTP ' + res.status);
+    const res = await fetch('/api/indices-fast', { signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const fast = await res.json();
-    dismissBootSplash();
     const quotes = fast?.indices || {};
-    sectionLoadState.indices = 'ready';
-    dashStore = {
-      ...(dashStore || {}),
-      quotes: { ...(dashStore?.quotes || {}), ...quotes },
-      fastTs: fast?.ts || new Date().toISOString()
-    };
+    dashStore = { ...(dashStore || {}), quotes: { ...(dashStore?.quotes || {}), ...quotes }, fastTs: fast?.ts };
     processLivePrices(quotes);
-    // FIX: Don't pass dashStore.global to processGlobal — it has lowercase keys
-    // processGlobal is only called from fetchGlobal() which uses /api/global directly
     renderApp();
     applyDashboardHealthLabel(dashStore.quotes || {});
     fetchGlobal();
     if (!dalalFocusMode) refreshFinanceBridge();
-    scheduleDashboardSlowLoad();
   } catch (e) {
     if (e.name === 'AbortError') return;
-    dismissBootSplash();
-    sectionLoadState.indices = 'error';
-    console.error('Fast indices error:', e);
-    const lu = document.getElementById('last-updated'); if (lu) { lu.textContent = 'ERROR'; lu.style.color = '#ff4444'; }
+    console.error('Fast indices error:', e.message);
+    const lu = document.getElementById('last-updated'); if (lu) { lu.textContent = 'CONNECTION ERROR'; lu.style.color = '#ff4444'; }
   } finally {
     if (indicesFastController === controller) indicesFastController = null;
-    indicesFastFetching = false; refreshCountdown = 10; const sr = document.getElementById('sb-refresh'); if (sr) { sr.textContent = 'REFRESH IN 10s'; sr.style.color = '#444'; }
+    indicesFastFetching = false;
+    refreshCountdown = 30;
+    const sr = document.getElementById('sb-refresh'); if (sr) { sr.textContent = 'REFRESH IN 30s'; sr.style.color = '#444'; }
   }
 }
 
 async function fetchDashboardSlowData() {
-  if (dashboardSlowFetching) return;
-  dashboardSlowFetching = true;
-  if (dashboardSlowController) {
-    try { dashboardSlowController.abort(); } catch {}
-  }
-  const controller = new AbortController();
-  dashboardSlowController = controller;
+  if (dashboardSlowFetching) return; dashboardSlowFetching = true;
+  if (dashboardSlowController) { try { dashboardSlowController.abort(); } catch {} }
+  const controller = new AbortController(); dashboardSlowController = controller;
   try {
-    const res = await fetch('/api/dashboard-slow', { signal: controller.signal }); if (!res.ok) throw new Error('HTTP ' + res.status);
+    const res = await fetch('/api/dashboard-slow', { signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const slow = await res.json();
-    sectionLoadState.slow = 'ready';
-    dashStore = {
-      ...(dashStore || {}),
-      fiiDii: slow?.fiiDii || dashStore?.fiiDii || null,
-      sentiment: slow?.sentiment || dashStore?.sentiment || null,
-      global: {
-        ...(dashStore?.global || {}),
-        indiaVix: slow?.vix?.spot || dashStore?.global?.indiaVix || null,
-        dxy: slow?.macro?.dxy || dashStore?.global?.dxy || null,
-        vix: slow?.macro?.vix || dashStore?.global?.vix || null
-      },
-      ticker: {
-        ...(dashStore?.ticker || {}),
-        usdinr: slow?.macro?.usdinr || dashStore?.ticker?.usdinr || null,
-        gold: slow?.macro?.gold || dashStore?.ticker?.gold || null,
-        crude: slow?.macro?.crude || dashStore?.ticker?.crude || null,
-        gsec: slow?.macro?.gsec || dashStore?.ticker?.gsec || null
-      },
-      series: {
-        ...(dashStore?.series || {}),
-        indiaVix: Array.isArray(slow?.vix?.series) ? slow.vix.series : (dashStore?.series?.indiaVix || []),
-        vixDaily: Array.isArray(slow?.vix?.series) ? slow.vix.series : (dashStore?.series?.vixDaily || []),
-        gsecDaily: Array.isArray(slow?.macro?.gsecDaily) ? slow.macro.gsecDaily : (dashStore?.series?.gsecDaily || [])
-      },
-      slowTs: slow?.ts || new Date().toISOString()
-    };
+    dashStore = { ...(dashStore || {}), fiiDii: slow?.fiiDii || dashStore?.fiiDii, slowTs: slow?.ts };
     const macroQuotes = {};
     if (slow?.macro?.usdinr) macroQuotes['USD/INR:Forex'] = slow.macro.usdinr;
     if (slow?.macro?.gold) macroQuotes['XAU/USD:Forex'] = slow.macro.gold;
     if (slow?.macro?.crude) macroQuotes['WTI:Commodity'] = slow.macro.crude;
     if (slow?.macro?.gsec) macroQuotes['IN10Y:Bond'] = slow.macro.gsec;
-    if (Object.keys(macroQuotes).length) {
-      dashStore.quotes = { ...(dashStore?.quotes || {}), ...macroQuotes };
-      processLivePrices(macroQuotes);
-    }
+    if (Object.keys(macroQuotes).length) { dashStore.quotes = { ...(dashStore?.quotes || {}), ...macroQuotes }; processLivePrices(macroQuotes); }
     processFiiDii(slow?.fiiDii || null);
-    processMiniVix({
-      vix: slow?.vix?.series,
-      gsec: slow?.macro?.gsecDaily,
-      spot: { vix: slow?.vix?.spot?.price, gsec: slow?.macro?.gsec?.price },
-      meta: { vix: slow?.vix?.status, gsec: { tag: 'DELAYED 15M', source: 'Yahoo Finance India 10Y' } }
-    });
+    processMiniVix({ vix: slow?.vix?.series, gsec: slow?.macro?.gsecDaily, spot: { vix: slow?.vix?.spot?.price, gsec: slow?.macro?.gsec?.price }, meta: { vix: slow?.vix?.status, gsec: { tag: 'DELAYED 15M', source: 'Yahoo Finance India 10Y' } } });
     renderApp();
     if (!dalalFocusMode) refreshFinanceBridge();
-    if (currentRP === 'global' && !globalData) fetchGlobal();
   } catch (e) {
     if (e.name === 'AbortError') return;
-    sectionLoadState.slow = 'error';
-    console.error('Slow dashboard error:', e);
+    console.error('Slow dashboard error:', e.message);
   } finally {
     if (dashboardSlowController === controller) dashboardSlowController = null;
     dashboardSlowFetching = false;
   }
 }
 
-function manualRefresh() { refreshCountdown = 10; const el = document.getElementById('sb-refresh'); el.innerHTML = '<span class="spin" style="display:inline-block;margin-right:4px">↻</span>REFRESHING...'; el.style.color = '#ff6600'; fetchDashboardData(); }
-
-// ── BOOT FLOW ──
-async function init() {
-  // Initialize Lenis Smooth Scroll
-  const lenis = new Lenis({
-    lerp: 0.1,
-    duration: 1.2,
-    smoothWheel: true
-  });
-  function raf(time) {
-    lenis.raf(time);
-    requestAnimationFrame(raf);
-  }
-  requestAnimationFrame(raf);
-  window.lenis = lenis;
-
-  try {
-    // Correct function names for boot flow
-    await fetchIndicesFastData();
-    await fetchDashboardSlowData();
-    await fetchLockin();
-    isStartupBoot = false;
-    
-    // Auto-load Market News on startup
-    loadCategory('market');
-    
-  } catch (e) {
-    console.error('Boot error:', e);
-  }
-}
-init();
-
 function fetchDashboardData() { return fetchIndicesFastData(); }
 
-manualRefresh = function () {
-  refreshCountdown = 10;
+function manualRefresh() {
+  refreshCountdown = 30;
   const el = document.getElementById('sb-refresh');
-  if (el) {
-    el.innerHTML = '<span class="spin" style="display:inline-block;margin-right:4px">↻</span>REFRESHING...';
-    el.style.color = '#ff6600';
-  }
+  if (el) { el.innerHTML = '<span style="display:inline-block;margin-right:4px">↻</span>REFRESHING...'; el.style.color = '#ff6600'; }
   fetchIndicesFastData();
-  scheduleDashboardSlowLoad(120);
+  scheduleDashboardSlowLoad(200);
 }
 
-setHeadlinesEmptyState('Choose a category', 'News loads on demand. Open a category or search when needed.');
+// ── BOOT SEQUENCE — FIXED ──
+async function init() {
+  // FIX 1: Warm auth token BEFORE any API call
+  await getDalalToken().catch(() => {});
+
+  // Init smooth scroll
+  try {
+    const lenis = new Lenis({ lerp: 0.1, duration: 1.2, smoothWheel: true });
+    function raf(time) { lenis.raf(time); requestAnimationFrame(raf); }
+    requestAnimationFrame(raf);
+    window.lenis = lenis;
+  } catch(e) { /* Lenis not available, skip */ }
+
+  try {
+    // Fast indices first (shows data immediately)
+    await fetchIndicesFastData();
+
+    // Slow data non-blocking
+    fetchDashboardSlowData();
+
+    // FIX 2: Set flag before loading category so news WILL fetch
+    isStartupBoot = false;
+
+    // Restore layout state
+    restoreLayout();
+    applyBridgeLaunchState();
+    applyDalalFocusMode();
+
+    // Show initial panel
+    const savedLayout = JSON.parse(localStorage.getItem('dw-layout') || '{}');
+    const startRP = savedLayout.rp || 'detail';
+    switchRP(['charts','wm','earnings'].includes(startRP) ? 'detail' : startRP, { fetchAdviceOnOpen: false });
+
+    // FIX 3: Explicitly load news — this is the primary fix for blank news panel
+    loadCategory(currentCat);
+
+    if (!dalalFocusMode) {
+      initFinanceBridgeGraph();
+      refreshFinanceBridge();
+    }
+
+  } catch (e) {
+    console.error('Boot error:', e);
+    isStartupBoot = false;
+    loadCategory('market');
+  }
+}
+
+// Initial render before data arrives
+setHeadlinesEmptyState('Loading market news...', 'Connecting to live feeds.');
 renderApp();
 renderHeadlines(true);
-// fetchIndicesFastData is already called in init()
-requestAnimationFrame(() => setTimeout(() => {
-  isStartupBoot = false;
-}, 100));
+renderEarnings();
+
+// Start boot
+init();
+
+// Refresh countdown timer
 setInterval(() => {
   refreshCountdown--;
   const el = document.getElementById('sb-refresh');
-  if (refreshCountdown <= 0) { refreshCountdown = 10; el.innerHTML = '<span class="spin" style="display:inline-block;margin-right:4px">↻</span>REFRESHING...'; el.style.color = '#ff6600'; fetchDashboardData(); }
-  else { el.innerHTML = `<span style="display:inline-block;margin-right:4px">↻</span>REFRESH IN ${refreshCountdown}s`; el.style.color = refreshCountdown <= 3 ? '#ff9900' : '#444'; }
+  if (refreshCountdown <= 0) {
+    refreshCountdown = 30;
+    if (el) { el.innerHTML = `<span style="display:inline-block;margin-right:4px">↻</span>REFRESHING...`; el.style.color = '#ff6600'; }
+    fetchDashboardData();
+  } else {
+    if (el) { el.innerHTML = `<span style="display:inline-block;margin-right:4px">↻</span>REFRESH IN ${refreshCountdown}s`; el.style.color = refreshCountdown <= 5 ? '#ff9900' : '#444'; }
+  }
 }, 1000);
+
+// Slow data refresh every 60s
 setInterval(() => { fetchDashboardSlowData(); }, 60000);
