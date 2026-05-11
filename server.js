@@ -38,10 +38,6 @@ const ROOT_DIR  = __dirname;
 
 // ── FILE PATHS ───────────────────────────────────────────────
 const DALAL_PUBLIC_DIR    = path.join(ROOT_DIR, 'dalal-wire-node', 'public');
-const BRIDGE_HOME_FILE    = path.join(ROOT_DIR, 'dalal-worldmonitor-bridge.html');
-const BRIDGE_APP_FILE     = path.join(ROOT_DIR, 'bridge-app.js');
-const BRIDGE_STYLES_FILE  = path.join(ROOT_DIR, 'bridge-styles.css');
-const SWITCHER_WIDGET_FILE = path.join(ROOT_DIR, 'switcher-widget.html');
 const DALAL_INDEX_FILE    = path.join(DALAL_PUBLIC_DIR, 'index.html');
 const DALAL_APP_FILE      = path.join(DALAL_PUBLIC_DIR, 'app.js');
 const DALAL_STYLES_FILE   = path.join(DALAL_PUBLIC_DIR, 'app.css');
@@ -244,6 +240,7 @@ function isFresh(key, ttlMs)            { const c = _cache[key]; return c && (Da
 
 // TTLs
 const TTL = {
+  SOP:           15_000,
   QUOTE:          10_000,   // 10s — Yahoo price quotes
   GLOBAL:         15_000,   // 15s — global indices
   FIIDII:         90_000,   // 90s — NSE FII/DII (EOD data, no need to hammer)
@@ -256,6 +253,7 @@ const TTL = {
   SLOW:          15_000,    // 15s — slow dashboard bundle
   LOCKIN:     5 * 60_000,   // 5m  — lock-in calendar
   DHAN:          30_000,    // 30s — broker portfolio data
+  COMPARE:       30_000,    // 30s — comparison panels
 };
 
 // ── REQUEST BATCHING STATE ────────────────────────────────────
@@ -302,9 +300,36 @@ function setApiCacheHeaders(res, sMaxage = 10, stale = 30) {
   res.set('Cache-Control', `s-maxage=${sMaxage}, stale-while-revalidate=${stale}`);
 }
 
+function logEndpointError(endpoint, err) {
+  console.error(`[${endpoint}] [${new Date().toISOString()}] [${err?.message || err}]`);
+}
+
+function structuredEndpointError(message = 'Data unavailable') {
+  return { error: message, freshness: 'UNAVAILABLE', ts: new Date().toISOString() };
+}
+
 function formatNseDate(value) {
   const d = value instanceof Date ? value : new Date(value);
   return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('-');
+}
+
+function normalizeSessionDate(value) {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const m = raw.match(/^(\d{1,2})[-/\s]([A-Za-z]{3,}|\d{1,2})[-/\s](\d{2,4})$/);
+  if (!m) {
+    const direct = new Date(raw);
+    return Number.isNaN(direct.getTime()) ? raw.slice(0, 10) : direct.toISOString().slice(0, 10);
+  }
+  const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
+  const day = Number(m[1]);
+  const mon = Number.isFinite(Number(m[2])) ? Number(m[2]) - 1 : months[m[2].slice(0, 3).toLowerCase()];
+  const year = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
+  const d = new Date(Date.UTC(year, mon, day));
+  return Number.isNaN(d.getTime()) ? raw.slice(0, 10) : d.toISOString().slice(0, 10);
 }
 
 function countUniqueSeries(values = []) {
@@ -428,18 +453,15 @@ function markStale(obj) {
 // Frontend relies safely on CORS Origin / Referer validation.
 
 // ── PAGE ROUTES ───────────────────────────────────────────────
-function sendBridgeHome(res) { res.sendFile(BRIDGE_HOME_FILE); }
-
-app.get('/',          (req, res) => sendBridgeHome(res));
-app.get('/bridge',    (req, res) => sendBridgeHome(res));
+app.get('/',          (req, res) => res.sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge.html')));
+app.get('/bridge',    (req, res) => res.sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge.html')));
 app.get('/terminal',  (req, res) => res.sendFile(DALAL_INDEX_FILE));
 
 // Static assets (no auth needed)
-app.get('/bridge-app.js',       (req, res) => res.type('application/javascript').sendFile(BRIDGE_APP_FILE));
-app.get('/bridge-styles.css',   (req, res) => res.type('text/css').sendFile(BRIDGE_STYLES_FILE));
-app.get('/switcher-widget.html',(req, res) => res.type('text/html').sendFile(SWITCHER_WIDGET_FILE));
 app.get('/app.js',              (req, res) => res.type('application/javascript').sendFile(DALAL_APP_FILE));
 app.get('/app.css',             (req, res) => res.type('text/css').sendFile(DALAL_STYLES_FILE));
+app.get('/bridge-app.js',       (req, res) => res.type('application/javascript').sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge-app.js')));
+app.get('/bridge-styles.css',   (req, res) => res.type('text/css').sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge-styles.css')));
 
 
 // ══════════════════════════════════════════════════════════════
@@ -673,7 +695,584 @@ app.get('/api/fiidii', async (req, res) => {
   }
 });
 
+function chartRowsByDate(chart) {
+  const rows = Array.isArray(chart?.quotes) ? chart.quotes : [];
+  return rows
+    .map(row => ({ date: normalizeSessionDate(row.date), close: toFiniteNumber(row.close, row.adjclose) }))
+    .filter(row => row.date && Number.isFinite(row.close) && row.close > 0);
+}
+
+const COMPARE_SERIES = {
+  NIFTY:     { label: 'Nifty 50',      yahoo: '^NSEI',      type: 'index',      unit: 'pts' },
+  SENSEX:    { label: 'Sensex',        yahoo: '^BSESN',     type: 'index',      unit: 'pts' },
+  BANKNIFTY: { label: 'Bank Nifty',    yahoo: '^NSEBANK',   type: 'index',      unit: 'pts' },
+  INDIAVIX:  { label: 'India VIX',     yahoo: '^INDIAVIX',  type: 'volatility', unit: '' },
+  USDINR:    { label: 'USD/INR',       yahoo: 'INR=X',      type: 'fx',         unit: '₹' },
+  GOLD:      { label: 'Gold',          yahoo: 'GC=F',       type: 'commodity',  unit: '$' },
+  CRUDE:     { label: 'Crude WTI',     yahoo: 'CL=F',       type: 'commodity',  unit: '$' },
+  GSEC:      { label: '10Y G-Sec',     yahoo: '^IN10YT=RR', type: 'bond',       unit: '%' },
+  DXY:       { label: 'DXY Index',     yahoo: 'DX-Y.NYB',   type: 'fx',         unit: '' },
+  SP500:     { label: 'S&P 500',       yahoo: '^GSPC',      type: 'index',      unit: 'pts' },
+  NASDAQ:    { label: 'Nasdaq',        yahoo: '^IXIC',      type: 'index',      unit: 'pts' },
+  FII:       { label: 'FII Net Flow',  yahoo: null,         type: 'flow',       unit: '₹Cr' },
+};
+
+async function getDailyCloseMap(symbol, lookbackDays = 55) {
+  const chart = await cachedYahooChart(symbol, {
+    period1: new Date(Date.now() - lookbackDays * 24 * 60 * 60_000),
+    period2: new Date(),
+    interval: '1d',
+  }, TTL.COMPARE);
+  return new Map(chartRowsByDate(chart).map(row => [row.date, row.close]));
+}
+
+async function getFiiNetMap(points = 28) {
+  const raw = await fetchNse('/api/fiidiiTradeReact');
+  const rows = Array.isArray(raw) ? raw : [];
+  const fii = rows
+    .map(row => {
+      const category = String(row.category || row.CATEGORY || row.Category || '').toUpperCase();
+      if (!category.includes('FII') && !category.includes('FPI')) return null;
+      return {
+        date: normalizeSessionDate(row.date || row.DATE || row.Date),
+        net: toFiniteNumber(row.netValue, row.NET_VALUE, row.net_value, row.net),
+      };
+    })
+    .filter(row => row && row.date && Number.isFinite(row.net))
+    .slice(0, points)
+    .reverse();
+  return new Map(fii.map(row => [row.date, row.net]));
+}
+
+async function getCompareSeries(key) {
+  const meta = COMPARE_SERIES[key];
+  if (!meta) return null;
+  if (meta.type === 'flow') {
+    const fmap = await getFiiNetMap(25);
+    return [...fmap.entries()]
+      .map(([date, value]) => ({ date, value }))
+      .filter(row => row.date && Number.isFinite(row.value))
+      .slice(-20);
+  }
+  const chart = await cachedYahooChart(meta.yahoo, {
+    period1: new Date(Date.now() - 70 * 24 * 60 * 60_000),
+    period2: new Date(),
+    interval: '1d',
+  }, TTL.COMPARE);
+  return chartRowsByDate(chart).map(row => ({ date: row.date, value: row.close })).slice(-25);
+}
+
+function normalizeWindow(values) {
+  const nums = values.map(Number).filter(Number.isFinite);
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const range = max - min;
+  if (!Number.isFinite(range) || range === 0) return values.map(() => 50);
+  return values.map(value => ((Number(value) - min) / range) * 100);
+}
+
+function pearsonValues(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length < 2) return 0;
+  const avgA = a.reduce((sum, value) => sum + value, 0) / a.length;
+  const avgB = b.reduce((sum, value) => sum + value, 0) / b.length;
+  let num = 0, denA = 0, denB = 0;
+  a.forEach((value, i) => {
+    const da = value - avgA;
+    const db = b[i] - avgB;
+    num += da * db;
+    denA += da * da;
+    denB += db * db;
+  });
+  const den = Math.sqrt(denA * denB);
+  return den ? num / den : 0;
+}
+
+function computeCompareDivergence(aligned) {
+  const aNorm = normalizeWindow(aligned.map(row => row.a));
+  const bNorm = normalizeWindow(aligned.map(row => row.b));
+  const fullCorr = pearsonValues(aNorm, bNorm);
+  const recentCorr = pearsonValues(aNorm.slice(-5), bNorm.slice(-5));
+  let divergence = 'ALIGNED';
+  if (fullCorr > 0.6 && recentCorr > 0.6) divergence = 'ALIGNED';
+  else if (fullCorr > 0.3 && recentCorr < 0) divergence = 'DIVERGING';
+  else if (fullCorr < 0 && recentCorr > 0.3) divergence = 'CONVERGING';
+  return { divergence, fullCorr, recentCorr };
+}
+
+function compareWindowMove(aligned, key, count = 5) {
+  const rows = aligned.slice(-count);
+  if (rows.length < 2) return 0;
+  return Number(rows[rows.length - 1][key]) - Number(rows[0][key]);
+}
+
+function getAlignedValue(aligned, seriesKey) {
+  return aligned.map(row => row.series?.[seriesKey]).filter(Number.isFinite);
+}
+
+function buildDynamicInterpretation(aKey, bKey, aligned, divergence) {
+  const aMeta = COMPARE_SERIES[aKey];
+  const bMeta = COMPARE_SERIES[bKey];
+  const hasFii = aKey === 'FII' || bKey === 'FII';
+  const indexKey = ['NIFTY', 'SENSEX'].includes(aKey) ? aKey : ['NIFTY', 'SENSEX'].includes(bKey) ? bKey : null;
+  if (hasFii && indexKey) {
+    const fiiMove = compareWindowMove(aligned, aKey === 'FII' ? 'a' : 'b');
+    const indexMove = compareWindowMove(aligned, aKey === indexKey ? 'a' : 'b');
+    if (divergence === 'DIVERGING' && fiiMove < 0 && indexMove > 0) return 'Market rising without institutional support — monitor for reversal';
+    if (divergence === 'DIVERGING' && fiiMove > 0 && indexMove < 0) return 'Institutions accumulating into weakness — potential base forming';
+    if (divergence === 'ALIGNED' && fiiMove > 0) return 'Institutional flow confirming market direction';
+  }
+
+  const hasVix = aKey === 'INDIAVIX' || bKey === 'INDIAVIX';
+  const indexSide = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'SP500', 'NASDAQ'].includes(aKey) ? 'a' : ['NIFTY', 'SENSEX', 'BANKNIFTY', 'SP500', 'NASDAQ'].includes(bKey) ? 'b' : null;
+  if (hasVix && indexSide) {
+    const vixMove = compareWindowMove(aligned, aKey === 'INDIAVIX' ? 'a' : 'b');
+    const indexMove = compareWindowMove(aligned, indexSide);
+    if (divergence === 'DIVERGING' && vixMove > 0 && indexMove >= 0) return 'Volatility rising before price reacts — consider hedging';
+    if (divergence === 'DIVERGING' && vixMove < 0 && indexMove > 0) return 'Fear unwinding — rally may have room';
+  }
+
+  const bankVsNifty = (aKey === 'BANKNIFTY' && bKey === 'NIFTY') || (aKey === 'NIFTY' && bKey === 'BANKNIFTY');
+  if (bankVsNifty) {
+    const bankValues = getAlignedValue(aligned, 'BANKNIFTY');
+    const niftyValues = getAlignedValue(aligned, 'NIFTY');
+    const ratios = bankValues.map((value, i) => value / niftyValues[i]).filter(Number.isFinite);
+    const last = ratios[ratios.length - 1];
+    const avg = ratios.slice(-20).reduce((sum, value) => sum + value, 0) / Math.max(ratios.slice(-20).length, 1);
+    if (Number.isFinite(last) && Number.isFinite(avg) && last > avg) return 'Banks outperforming — risk-on signal';
+    if (Number.isFinite(last) && Number.isFinite(avg) && last < avg) return 'Banks lagging — defensive tape';
+  }
+
+  if (divergence === 'DIVERGING') return `${aMeta.label} and ${bMeta.label} are moving independently — potential mean reversion ahead`;
+  if (divergence === 'CONVERGING') return `${aMeta.label} and ${bMeta.label} are realigning after divergence`;
+  return `${aMeta.label} tracking ${bMeta.label} closely over this window`;
+}
+
+async function buildDynamicCompare(aKey, bKey) {
+  if (!COMPARE_SERIES[aKey] || !COMPARE_SERIES[bKey]) {
+    const err = new Error('Invalid series key');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (aKey === bKey) {
+    const err = new Error('Series A and Series B must be different');
+    err.statusCode = 400;
+    throw err;
+  }
+  const cacheKey = `compare_${aKey}_${bKey}`;
+  if (isFresh(cacheKey, TTL.COMPARE)) return getCache(cacheKey).data;
+  const reverseKey = `compare_${bKey}_${aKey}`;
+  if (isFresh(reverseKey, TTL.COMPARE)) {
+    const reversed = getCache(reverseKey).data;
+    const out = {
+      ...reversed,
+      a: { ...reversed.b },
+      b: { ...reversed.a },
+      aligned: reversed.aligned.map(row => ({ date: row.date, a: row.b, b: row.a, series: row.series })),
+    };
+    setCache(cacheKey, out);
+    return out;
+  }
+
+  let [seriesA, seriesB] = await Promise.all([getCompareSeries(aKey), getCompareSeries(bKey)]);
+  if (aKey === 'FII' && seriesA.length > 0 && seriesA.length < 5 && seriesB.length >= 5) {
+    const latest = seriesA[seriesA.length - 1].value;
+    seriesA = seriesB.slice(-20).map(row => ({ date: row.date, value: latest }));
+  }
+  if (bKey === 'FII' && seriesB.length > 0 && seriesB.length < 5 && seriesA.length >= 5) {
+    const latest = seriesB[seriesB.length - 1].value;
+    seriesB = seriesA.slice(-20).map(row => ({ date: row.date, value: latest }));
+  }
+  const mapA = new Map(seriesA.map(row => [row.date, row.value]));
+  const mapB = new Map(seriesB.map(row => [row.date, row.value]));
+  const aligned = [...mapA.entries()]
+    .filter(([date]) => mapB.has(date))
+    .map(([date, a]) => ({ date, a, b: mapB.get(date), series: { [aKey]: a, [bKey]: mapB.get(date) } }))
+    .filter(row => Number.isFinite(row.a) && Number.isFinite(row.b))
+    .slice(-25);
+  if (aligned.length < 5) {
+    const err = new Error('Not enough aligned comparison data');
+    err.statusCode = 503;
+    throw err;
+  }
+  const score = computeCompareDivergence(aligned);
+  const out = {
+    a: { key: aKey, label: COMPARE_SERIES[aKey].label, unit: COMPARE_SERIES[aKey].unit, series: seriesA },
+    b: { key: bKey, label: COMPARE_SERIES[bKey].label, unit: COMPARE_SERIES[bKey].unit, series: seriesB },
+    aligned,
+    sessions: aligned.length,
+    divergence: score.divergence,
+    fullCorrelation: Number(score.fullCorr.toFixed(2)),
+    recentCorrelation: Number(score.recentCorr.toFixed(2)),
+    interpretation: buildDynamicInterpretation(aKey, bKey, aligned, score.divergence),
+    ts: new Date().toISOString(),
+  };
+  setCache(cacheKey, out);
+  setCache(reverseKey, {
+    ...out,
+    a: { ...out.b },
+    b: { ...out.a },
+    aligned: out.aligned.map(row => ({ date: row.date, a: row.b, b: row.a, series: row.series })),
+  });
+  return out;
+}
+
+app.get('/api/compare', async (req, res) => {
+  setApiCacheHeaders(res, 30, 30);
+  try {
+    const a = String(req.query.a || '').toUpperCase();
+    const b = String(req.query.b || '').toUpperCase();
+    res.json(await buildDynamicCompare(a, b));
+  } catch (e) {
+    logEndpointError('COMPARE', e);
+    const a = String(req.query.a || '').toUpperCase();
+    const b = String(req.query.b || '').toUpperCase();
+    const stale = getCache(`compare_${a}_${b}`) || getCache(`compare_${b}_${a}`);
+    if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(e.statusCode || 500).json(structuredEndpointError(e.statusCode ? e.message : 'Compare data unavailable'));
+  }
+});
+
+app.get('/api/compare/:pair', async (req, res) => {
+  setApiCacheHeaders(res, 30, 30);
+  try {
+    const pairMap = {
+      'fii-nifty': ['FII', 'NIFTY'],
+      'vix-nifty': ['INDIAVIX', 'NIFTY'],
+      'bank-nifty': ['BANKNIFTY', 'NIFTY'],
+    };
+    const keys = pairMap[String(req.params.pair || '').toLowerCase()];
+    if (!keys) {
+      const err = new Error('Invalid compare pair');
+      err.statusCode = 400;
+      throw err;
+    }
+    res.json(await buildDynamicCompare(keys[0], keys[1]));
+  } catch (e) {
+    logEndpointError('COMPARE', e);
+    const stale = getCache(`compare_${String(req.params.pair || '').toLowerCase()}`);
+    if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(e.statusCode || 500).json(structuredEndpointError(e.statusCode ? e.message : 'Compare data unavailable'));
+  }
+});
+
 // ── VIX SERIES (for sparkline) ────────────────────────────────
+async function buildMacroContext() {
+  if (isFresh('macro_context', TTL.SOP)) return getCache('macro_context').data;
+  const keys = [
+    ['usdinr', 'INR=X'],
+    ['crude', 'CL=F'],
+    ['gold', 'GC=F'],
+    ['dxy', 'DX-Y.NYB'],
+    ['gsec', '^IN10YT=RR'],
+  ];
+  const results = await Promise.allSettled(keys.map(([, symbol]) => cachedYahooQuote(symbol, TTL.SOP)));
+  const cards = {};
+  keys.forEach(([key], index) => {
+    const q = results[index]?.status === 'fulfilled' ? quoteSnapshot(results[index].value) : { price: 0, change: 0, percent_change: 0 };
+    let signal = 'neutral', badge = 'WATCH', implication = 'Macro signal is balanced.';
+    if (key === 'usdinr') {
+      signal = q.percent_change > 0.2 ? 'headwind' : q.percent_change < -0.2 ? 'tailwind' : 'neutral';
+      badge = signal === 'headwind' ? 'RUPEE WEAK' : signal === 'tailwind' ? 'RUPEE FIRM' : 'STABLE';
+      implication = signal === 'headwind' ? 'Weaker rupee can pressure imported inflation and FII sentiment.' : signal === 'tailwind' ? 'Rupee firmness supports risk appetite.' : 'Currency is not a dominant driver.';
+    } else if (key === 'crude') {
+      signal = q.price > 90 || q.percent_change > 1 ? 'headwind' : q.percent_change < -1 ? 'tailwind' : 'neutral';
+      badge = signal === 'headwind' ? 'COST RISK' : signal === 'tailwind' ? 'RELIEF' : 'WATCH';
+      implication = signal === 'headwind' ? 'Crude strength is a margin and inflation headwind.' : signal === 'tailwind' ? 'Crude softness reduces macro stress.' : 'Crude is contained for now.';
+    } else if (key === 'gold') {
+      signal = q.percent_change > 0.5 ? 'headwind' : 'neutral';
+      badge = signal === 'headwind' ? 'HAVEN BID' : 'CALM';
+      implication = signal === 'headwind' ? 'Gold strength hints at defensive positioning.' : 'Gold is not signalling stress.';
+    } else if (key === 'dxy') {
+      signal = q.percent_change > 0.2 ? 'headwind' : q.percent_change < -0.2 ? 'tailwind' : 'neutral';
+      badge = signal === 'headwind' ? 'DOLLAR UP' : signal === 'tailwind' ? 'DOLLAR SOFT' : 'FLAT';
+      implication = signal === 'headwind' ? 'Dollar firmness can pressure EM flows.' : signal === 'tailwind' ? 'Dollar softness helps EM risk.' : 'Dollar impulse is muted.';
+    } else if (key === 'gsec') {
+      signal = q.percent_change > 0.3 ? 'headwind' : q.percent_change < -0.3 ? 'tailwind' : 'neutral';
+      badge = signal === 'headwind' ? 'YIELD UP' : signal === 'tailwind' ? 'YIELD EASE' : 'STEADY';
+      implication = signal === 'headwind' ? 'Higher yields challenge equity duration.' : signal === 'tailwind' ? 'Lower yields support valuation comfort.' : 'Rates are steady.';
+    }
+    cards[key] = { ...q, signal, badge, implication };
+  });
+  const out = { cards, freshness: 'LIVE', ts: new Date().toISOString() };
+  setCache('macro_context', out);
+  return out;
+}
+
+app.get('/api/macro-context', async (req, res) => {
+  setApiCacheHeaders(res, 15, 30);
+  try {
+    res.json(await buildMacroContext());
+  } catch (e) {
+    logEndpointError('MACRO-CONTEXT', e);
+    const stale = getCache('macro_context');
+    if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError('Macro context unavailable'));
+  }
+});
+
+function pctChange(latest, prev) {
+  latest = Number(latest); prev = Number(prev);
+  if (!Number.isFinite(latest) || !Number.isFinite(prev) || prev === 0) return 0;
+  return ((latest - prev) / prev) * 100;
+}
+
+function avg(values) {
+  const nums = values.map(Number).filter(Number.isFinite);
+  return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : null;
+}
+
+function distancePct(value, base) {
+  value = Number(value); base = Number(base);
+  if (!Number.isFinite(value) || !Number.isFinite(base) || base === 0) return null;
+  return ((value - base) / base) * 100;
+}
+
+function computeRsi14(closes) {
+  const values = closes.map(Number).filter(Number.isFinite).slice(-15);
+  if (values.length < 15) return null;
+  let gains = 0, losses = 0;
+  for (let i = 1; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  const avgGain = gains / 14;
+  const avgLoss = losses / 14;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+async function sopDailyRows(symbol, days = 260) {
+  const chart = await cachedYahooChart(symbol, {
+    period1: new Date(Date.now() - days * 24 * 60 * 60_000),
+    period2: new Date(),
+    interval: '1d',
+  }, TTL.SOP);
+  return chartRowsByDate(chart);
+}
+
+function quoteSnapshot(q) {
+  return {
+    price: toFiniteNumber(q?.regularMarketPrice, q?.price) ?? 0,
+    change: toFiniteNumber(q?.regularMarketChange) ?? 0,
+    percent_change: toFiniteNumber(q?.regularMarketChangePercent) ?? 0,
+  };
+}
+
+function classifyVix(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return 'unknown';
+  if (v < 13) return 'low';
+  if (v < 18) return 'normal';
+  if (v < 25) return 'elevated';
+  return 'extreme';
+}
+
+function trend3(rows) {
+  const values = rows.map(row => Number(row.close ?? row)).filter(Number.isFinite).slice(-3);
+  if (values.length < 3) return 'flat';
+  const delta = values[2] - values[0];
+  if (Math.abs(delta) < 0.15) return 'flat';
+  return delta > 0 ? 'rising' : 'falling';
+}
+
+function fiiDirection(today, yesterday) {
+  today = Number(today) || 0;
+  yesterday = Number(yesterday) || 0;
+  if ((today >= 0 && yesterday < 0) || (today < 0 && yesterday >= 0)) return 'reversing';
+  if (Math.abs(today) > Math.abs(yesterday)) return 'accelerating';
+  if (Math.abs(today) < Math.abs(yesterday)) return 'decelerating';
+  return 'flat';
+}
+
+async function buildSopData() {
+  if (isFresh('sop_data', TTL.SOP)) return getCache('sop_data').data;
+
+  const [
+    niftyRows,
+    bankRows,
+    vixRows,
+    niftyQuote,
+    bankQuote,
+    vixQuote,
+    fiiDii,
+    macroQuotes,
+    global,
+  ] = await Promise.all([
+    sopDailyRows('^NSEI', 290),
+    sopDailyRows('^NSEBANK', 60),
+    sopDailyRows('^INDIAVIX', 20),
+    cachedYahooQuote('^NSEI', TTL.SOP).catch(() => null),
+    cachedYahooQuote('^NSEBANK', TTL.SOP).catch(() => null),
+    cachedYahooQuote('^INDIAVIX', TTL.SOP).catch(() => null),
+    getFiiDiiData().catch(() => getCache('fiidii')?.data || {}),
+    Promise.allSettled([
+      cachedYahooQuote('INR=X', TTL.SOP),
+      cachedYahooQuote('CL=F', TTL.SOP),
+      cachedYahooQuote('GC=F', TTL.SOP),
+      cachedYahooQuote('DX-Y.NYB', TTL.SOP),
+      cachedYahooQuote('^IN10YT=RR', TTL.SOP),
+    ]),
+    getGlobalData().catch(() => getCache('global')?.data || {}),
+  ]);
+
+  const niftyCloses = niftyRows.map(row => row.close);
+  const bankCloses = bankRows.map(row => row.close);
+  const latestNifty = quoteSnapshot(niftyQuote);
+  const latestBank = quoteSnapshot(bankQuote);
+  const latestVix = quoteSnapshot(vixQuote);
+  const niftyPrice = latestNifty.price || niftyCloses[niftyCloses.length - 1] || 0;
+  const bankPrice = latestBank.price || bankCloses[bankCloses.length - 1] || 0;
+  const niftyPct = latestNifty.percent_change || pctChange(niftyCloses.at(-1), niftyCloses.at(-2));
+  const bankPct = latestBank.percent_change || pctChange(bankCloses.at(-1), bankCloses.at(-2));
+  const ma20 = avg(niftyCloses.slice(-20));
+  const ma200 = avg(niftyCloses.slice(-200));
+
+  const macroKeys = ['usdinr', 'crude', 'gold', 'dxy', 'gsec'];
+  const macro = {};
+  macroKeys.forEach((key, index) => {
+    const result = macroQuotes[index];
+    macro[key] = result?.status === 'fulfilled' ? quoteSnapshot(result.value) : { price: 0, change: 0, percent_change: 0 };
+  });
+
+  const globalChanges = [
+    Number(global?.SP500?.percent_change || 0),
+    Number(global?.DOW?.percent_change || 0),
+    Number(global?.NASDAQ?.percent_change || 0),
+  ];
+  const overnightAvg = avg(globalChanges) ?? 0;
+  const overnightBias = overnightAvg > 0.15 ? 'positive' : overnightAvg < -0.15 ? 'negative' : 'neutral';
+  const fiiToday = toFiniteNumber(fiiDii?.today?.fii_net, fiiDii?.fii?.[0]?.net) ?? 0;
+  const fiiYesterday = toFiniteNumber(fiiDii?.fii?.[1]?.net) ?? 0;
+  const valuationLabel = niftyPrice > 22000 && niftyPct > 0 ? 'STRETCHED' : niftyPrice < 18000 ? 'ATTRACTIVE' : 'FAIR';
+
+  const out = {
+    nifty: {
+      price: niftyPrice,
+      percent_change: niftyPct,
+      distance_20d_ma: distancePct(niftyPrice, ma20),
+      distance_200d_ma: distancePct(niftyPrice, ma200),
+      rsi14: computeRsi14(niftyCloses),
+    },
+    banknifty: {
+      price: bankPrice,
+      percent_change: bankPct,
+      relative_strength: niftyPct === 0 ? null : bankPct / niftyPct,
+    },
+    vix: {
+      price: latestVix.price || vixRows.at(-1)?.close || 0,
+      trend_3d: trend3(vixRows),
+      level: classifyVix(latestVix.price || vixRows.at(-1)?.close),
+    },
+    fii: {
+      today_net: fiiToday,
+      yesterday_net: fiiYesterday,
+      direction: fiiDirection(fiiToday, fiiYesterday),
+    },
+    macro,
+    global: {
+      sp500: Number(global?.SP500?.percent_change || 0),
+      dow: Number(global?.DOW?.percent_change || 0),
+      nasdaq: Number(global?.NASDAQ?.percent_change || 0),
+      overnight_bias: overnightBias,
+    },
+    valuation: {
+      label: valuationLabel,
+      nifty_level: niftyPrice,
+    },
+    ts: new Date().toISOString(),
+  };
+  setCache('sop_data', out);
+  return out;
+}
+
+app.get('/api/sop-data', async (req, res) => {
+  setApiCacheHeaders(res, 15, 30);
+  try {
+    res.json(await buildSopData());
+  } catch (e) {
+    logEndpointError('SOP-DATA', e);
+    const stale = getCache('sop_data');
+    if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError('SOP data unavailable'));
+  }
+});
+
+// ── SOP HISTORY (DELTAS) ──────────────────────────────────────
+async function getSopHistory() {
+  if (isFresh('sop_history', 60_000)) return getCache('sop_history').data;
+  
+  const keys = ['^NSEI', '^NSEBANK', '^INDIAVIX', 'INR=X', 'CL=F', 'GC=F', '^IN10YT=RR', 'DX-Y.NYB'];
+  const mapping = ['nifty', 'banknifty', 'vix', 'usdinr', 'crude', 'gold', 'gsec', 'dxy'];
+  
+  const period1 = new Date(Date.now() - 7 * 24 * 60 * 60_000);
+  const period2 = new Date();
+  
+  const [chartResults, fiidiiRes] = await Promise.all([
+    Promise.allSettled(keys.map(sym => cachedYahooChart(sym, { period1, period2, interval: '1d' }, TTL.SOP))),
+    getFiiDiiData().catch(() => getCache('fiidii')?.data || {})
+  ]);
+  
+  let session0 = { date: '', fii_net: 0 };
+  let session1 = { date: '', fii_net: 0 };
+  
+  const niftyRes = chartResults[0];
+  if (niftyRes.status === 'fulfilled' && niftyRes.value) {
+    const rows = chartRowsByDate(niftyRes.value);
+    if (rows.length >= 2) {
+      session0.date = rows[rows.length - 1].date;
+      session1.date = rows[rows.length - 2].date;
+    } else if (rows.length === 1) {
+      session0.date = rows[0].date;
+      session1.date = rows[0].date;
+    }
+  }
+  
+  mapping.forEach((prop, idx) => {
+    const res = chartResults[idx];
+    if (res.status === 'fulfilled' && res.value) {
+      const rows = chartRowsByDate(res.value);
+      if (rows.length >= 2) {
+        session0[prop] = rows[rows.length - 1].close;
+        session1[prop] = rows[rows.length - 2].close;
+      } else if (rows.length === 1) {
+        session0[prop] = rows[0].close;
+        session1[prop] = rows[0].close;
+      } else {
+        session0[prop] = 0;
+        session1[prop] = 0;
+      }
+    } else {
+      session0[prop] = 0;
+      session1[prop] = 0;
+    }
+  });
+  
+  const fiiList = fiidiiRes?.fii || [];
+  session0.fii_net = fiiList[0]?.net || 0;
+  session1.fii_net = fiiList[1]?.net || 0;
+  
+  const out = {
+    sessions: [session0, session1],
+    ts: new Date().toISOString()
+  };
+  setCache('sop_history', out);
+  return out;
+}
+
+app.get('/api/sop-history', async (req, res) => {
+  setApiCacheHeaders(res, 60, 60);
+  try {
+    res.json(await getSopHistory());
+  } catch (e) {
+    logEndpointError('SOP-HISTORY', e);
+    const stale = getCache('sop_history');
+    if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.json({ sessions: [], ts: new Date().toISOString(), stale: true });
+  }
+});
+
 async function getIndiaVixSeries(points = 24) {
   if (isFresh('india_vix_series', TTL.FIIDII)) return getCache('india_vix_series').data;
   try {
@@ -1344,12 +1943,141 @@ async function fetchRssFeed(source) {
   finally { clearTimeout(timeout); }
 }
 
-function extractTags(title, cat) {
-  const t = (title || '').toUpperCase();
-  const tags = [];
-  ['NIFTY', 'SENSEX', 'RELIANCE', 'TCS', 'INFOSYS', 'HDFC', 'ICICI', 'SBI', 'WIPRO', 'ADANI', 'TATA', 'RBI', 'FED', 'SEBI'].forEach(c => { if (t.includes(c)) tags.push(c); });
-  if (tags.length === 0) tags.push({ market: 'MARKET', banks: 'BANKING', sectors: 'SECTORS', macro: 'MACRO', stocks: 'STOCKS', global: 'GLOBAL' }[cat] || cat.toUpperCase());
-  return tags.slice(0, 3);
+const ENTITY_MAP = {
+  // Stock matches
+  'reliance': { symbol: 'RELIANCE:NSE', label: 'Reliance', sector: 'Energy', type: 'stock' },
+  'tcs': { symbol: 'TCS:NSE', label: 'TCS', sector: 'IT', type: 'stock' },
+  'infosys': { symbol: 'INFY:NSE', label: 'Infosys', sector: 'IT', type: 'stock' },
+  'infy': { symbol: 'INFY:NSE', label: 'Infosys', sector: 'IT', type: 'stock' },
+  'hdfc bank': { symbol: 'HDFCBANK:NSE', label: 'HDFC Bank', sector: 'Banking', type: 'stock' },
+  'hdfcbank': { symbol: 'HDFCBANK:NSE', label: 'HDFC Bank', sector: 'Banking', type: 'stock' },
+  'icici bank': { symbol: 'ICICIBANK:NSE', label: 'ICICI Bank', sector: 'Banking', type: 'stock' },
+  'icicibank': { symbol: 'ICICIBANK:NSE', label: 'ICICI Bank', sector: 'Banking', type: 'stock' },
+  'sbi': { symbol: 'SBIN:NSE', label: 'SBI', sector: 'Banking', type: 'stock' },
+  'state bank': { symbol: 'SBIN:NSE', label: 'SBI', sector: 'Banking', type: 'stock' },
+  'wipro': { symbol: 'WIPRO:NSE', label: 'Wipro', sector: 'IT', type: 'stock' },
+  'tata motors': { symbol: 'TATAMOTORS:NSE', label: 'Tata Motors', sector: 'Auto', type: 'stock' },
+  'tatamotors': { symbol: 'TATAMOTORS:NSE', label: 'Tata Motors', sector: 'Auto', type: 'stock' },
+  'tata steel': { symbol: 'TATASTEEL:NSE', label: 'Tata Steel', sector: 'Metals', type: 'stock' },
+  'tatasteel': { symbol: 'TATASTEEL:NSE', label: 'Tata Steel', sector: 'Metals', type: 'stock' },
+  'adani': { symbol: 'ADANIENT:NSE', label: 'Adani Ent', sector: 'Conglomerate', type: 'stock' },
+  'bajaj finance': { symbol: 'BAJFINANCE:NSE', label: 'Bajaj Finance', sector: 'Finance', type: 'stock' },
+  'bajfinance': { symbol: 'BAJFINANCE:NSE', label: 'Bajaj Finance', sector: 'Finance', type: 'stock' },
+  'maruti': { symbol: 'MARUTI:NSE', label: 'Maruti Suzuki', sector: 'Auto', type: 'stock' },
+  'axis bank': { symbol: 'AXISBANK:NSE', label: 'Axis Bank', sector: 'Banking', type: 'stock' },
+  'axisbank': { symbol: 'AXISBANK:NSE', label: 'Axis Bank', sector: 'Banking', type: 'stock' },
+  'kotak': { symbol: 'KOTAKBANK:NSE', label: 'Kotak Mahindra', sector: 'Banking', type: 'stock' },
+  'sun pharma': { symbol: 'SUNPHARMA:NSE', label: 'Sun Pharma', sector: 'Pharma', type: 'stock' },
+  'sunpharma': { symbol: 'SUNPHARMA:NSE', label: 'Sun Pharma', sector: 'Pharma', type: 'stock' },
+  'hul': { symbol: 'HINDUNILVR:NSE', label: 'HUL', sector: 'FMCG', type: 'stock' },
+  'hindustan unilever': { symbol: 'HINDUNILVR:NSE', label: 'HUL', sector: 'FMCG', type: 'stock' },
+  'l&t': { symbol: 'LT:NSE', label: 'L&T', sector: 'Infra', type: 'stock' },
+  'larsen': { symbol: 'LT:NSE', label: 'L&T', sector: 'Infra', type: 'stock' },
+  'itc': { symbol: 'ITC:NSE', label: 'ITC', sector: 'FMCG', type: 'stock' },
+  'titan': { symbol: 'TITAN:NSE', label: 'Titan', sector: 'Consumer', type: 'stock' },
+  'asian paints': { symbol: 'ASIANPAINT:NSE', label: 'Asian Paints', sector: 'Consumer', type: 'stock' },
+  'asianpaint': { symbol: 'ASIANPAINT:NSE', label: 'Asian Paints', sector: 'Consumer', type: 'stock' },
+  'ongc': { symbol: 'ONGC:NSE', label: 'ONGC', sector: 'Energy', type: 'stock' },
+  'bpcl': { symbol: 'BPCL:NSE', label: 'BPCL', sector: 'Energy', type: 'stock' },
+  'ntpc': { symbol: 'NTPC:NSE', label: 'NTPC', sector: 'Energy', type: 'stock' },
+  'power grid': { symbol: 'POWERGRID:NSE', label: 'Power Grid', sector: 'Energy', type: 'stock' },
+  'powergrid': { symbol: 'POWERGRID:NSE', label: 'Power Grid', sector: 'Energy', type: 'stock' },
+  'tech mahindra': { symbol: 'TECHM:NSE', label: 'Tech Mahindra', sector: 'IT', type: 'stock' },
+  'techm': { symbol: 'TECHM:NSE', label: 'Tech Mahindra', sector: 'IT', type: 'stock' },
+  'hcl tech': { symbol: 'HCLTECH:NSE', label: 'HCL Tech', sector: 'IT', type: 'stock' },
+  'hcltech': { symbol: 'HCLTECH:NSE', label: 'HCL Tech', sector: 'IT', type: 'stock' },
+  'dr reddy': { symbol: 'DRREDDY:NSE', label: 'Dr Reddy', sector: 'Pharma', type: 'stock' },
+  'drreddy': { symbol: 'DRREDDY:NSE', label: 'Dr Reddy', sector: 'Pharma', type: 'stock' },
+  'cipla': { symbol: 'CIPLA:NSE', label: 'Cipla', sector: 'Pharma', type: 'stock' },
+  'britannia': { symbol: 'BRITANNIA:NSE', label: 'Britannia', sector: 'FMCG', type: 'stock' },
+  'nestle': { symbol: 'NESTLEIND:NSE', label: 'Nestle India', sector: 'FMCG', type: 'stock' },
+  'apollo hospitals': { symbol: 'APOLLOHOSP:NSE', label: 'Apollo Hospitals', sector: 'Healthcare', type: 'stock' },
+  'ultratech': { symbol: 'ULTRACEMCO:NSE', label: 'UltraTech Cement', sector: 'Materials', type: 'stock' },
+  'shree cement': { symbol: 'SHREECEM:NSE', label: 'Shree Cement', sector: 'Materials', type: 'stock' },
+  'jsw steel': { symbol: 'JSWSTEEL:NSE', label: 'JSW Steel', sector: 'Metals', type: 'stock' },
+  'jswsteel': { symbol: 'JSWSTEEL:NSE', label: 'JSW Steel', sector: 'Metals', type: 'stock' },
+  'hindalco': { symbol: 'HINDALCO:NSE', label: 'Hindalco', sector: 'Metals', type: 'stock' },
+  'tata consumer': { symbol: 'TATACONSUM:NSE', label: 'Tata Consumer', sector: 'FMCG', type: 'stock' },
+  'sbi life': { symbol: 'SBILIFE:NSE', label: 'SBI Life', sector: 'Finance', type: 'stock' },
+  'hdfc life': { symbol: 'HDFCLIFE:NSE', label: 'HDFC Life', sector: 'Finance', type: 'stock' },
+  'indusind bank': { symbol: 'INDUSINDBK:NSE', label: 'IndusInd Bank', sector: 'Banking', type: 'stock' },
+  'indusindbk': { symbol: 'INDUSINDBK:NSE', label: 'IndusInd Bank', sector: 'Banking', type: 'stock' },
+  'zomato': { symbol: 'ZOMATO:NSE', label: 'Zomato', sector: 'Consumer', type: 'stock' },
+  'nykaa': { symbol: 'NYKAA:NSE', label: 'Nykaa', sector: 'Consumer', type: 'stock' },
+  'paytm': { symbol: 'PAYTM:NSE', label: 'Paytm', sector: 'Technology', type: 'stock' },
+  'irctc': { symbol: 'IRCTC:NSE', label: 'IRCTC', sector: 'Services', type: 'stock' },
+  'dmart': { symbol: 'DMART:NSE', label: 'DMart', sector: 'Consumer', type: 'stock' },
+  'avenue supermarts': { symbol: 'DMART:NSE', label: 'DMart', sector: 'Consumer', type: 'stock' },
+
+  // Index matches
+  'nifty 50': { symbol: 'NIFTY:NSE', label: 'Nifty 50', sector: 'Index', type: 'index' },
+  'nifty50': { symbol: 'NIFTY:NSE', label: 'Nifty 50', sector: 'Index', type: 'index' },
+  'sensex': { symbol: 'SENSEX:BSE', label: 'Sensex', sector: 'Index', type: 'index' },
+  'bank nifty': { symbol: 'BANKNIFTY:NSE', label: 'Bank Nifty', sector: 'Index', type: 'index' },
+  'banknifty': { symbol: 'BANKNIFTY:NSE', label: 'Bank Nifty', sector: 'Index', type: 'index' },
+  'nifty it': { symbol: 'NIFTYIT:NSE', label: 'Nifty IT', sector: 'Index', type: 'index' },
+  'nifty auto': { symbol: 'NIFTYAUTO:NSE', label: 'Nifty Auto', sector: 'Index', type: 'index' },
+  'nifty pharma': { symbol: 'NIFTYPHARMA:NSE', label: 'Nifty Pharma', sector: 'Index', type: 'index' },
+  'nifty metal': { symbol: 'NIFTYMETAL:NSE', label: 'Nifty Metal', sector: 'Index', type: 'index' },
+  'nifty realty': { symbol: 'NIFTYREALTY:NSE', label: 'Nifty Realty', sector: 'Index', type: 'index' },
+  'nifty fmcg': { symbol: 'NIFTYFMCG:NSE', label: 'Nifty FMCG', sector: 'Index', type: 'index' },
+  'nifty midcap': { symbol: 'NIFTYMIDCAP:NSE', label: 'Nifty Midcap', sector: 'Index', type: 'index' },
+  'nifty smallcap': { symbol: 'NIFTYSMALLCAP:NSE', label: 'Nifty Smallcap', sector: 'Index', type: 'index' },
+
+  // Macro matches
+  'rbi': { symbol: 'RBI:MACRO', label: 'RBI', sector: 'Macro', type: 'macro' },
+  'reserve bank': { symbol: 'RBI:MACRO', label: 'RBI', sector: 'Macro', type: 'macro' },
+  'sebi': { symbol: 'SEBI:MACRO', label: 'SEBI', sector: 'Macro', type: 'macro' },
+  'fed': { symbol: 'FED:MACRO', label: 'Federal Reserve', sector: 'Macro', type: 'macro' },
+  'federal reserve': { symbol: 'FED:MACRO', label: 'Federal Reserve', sector: 'Macro', type: 'macro' },
+  'repo rate': { symbol: 'REPO:MACRO', label: 'Repo Rate', sector: 'Macro', type: 'macro' },
+  'inflation': { symbol: 'INFLATION:MACRO', label: 'Inflation', sector: 'Macro', type: 'macro' },
+  'cpi': { symbol: 'CPI:MACRO', label: 'CPI', sector: 'Macro', type: 'macro' },
+  'gdp': { symbol: 'GDP:MACRO', label: 'GDP', sector: 'Macro', type: 'macro' },
+  'fii': { symbol: 'FII:MACRO', label: 'FII', sector: 'Macro', type: 'macro' },
+  'foreign investor': { symbol: 'FII:MACRO', label: 'FII', sector: 'Macro', type: 'macro' },
+  'dii': { symbol: 'DII:MACRO', label: 'DII', sector: 'Macro', type: 'macro' },
+  'domestic investor': { symbol: 'DII:MACRO', label: 'DII', sector: 'Macro', type: 'macro' },
+  'rupee': { symbol: 'INR:MACRO', label: 'Rupee', sector: 'Macro', type: 'macro' },
+  'dollar': { symbol: 'USD:MACRO', label: 'Dollar', sector: 'Macro', type: 'macro' },
+  'crude': { symbol: 'CRUDE:MACRO', label: 'Crude Oil', sector: 'Macro', type: 'macro' },
+  'brent': { symbol: 'BRENT:MACRO', label: 'Brent Crude', sector: 'Macro', type: 'macro' },
+  'gold': { symbol: 'GOLD:MACRO', label: 'Gold', sector: 'Macro', type: 'macro' },
+  'silver': { symbol: 'SILVER:MACRO', label: 'Silver', sector: 'Macro', type: 'macro' },
+  'us 10y': { symbol: 'US10Y:MACRO', label: 'US 10Y Yield', sector: 'Macro', type: 'macro' },
+  'g-sec': { symbol: 'GSEC:MACRO', label: 'G-Sec', sector: 'Macro', type: 'macro' },
+  'gsec': { symbol: 'GSEC:MACRO', label: 'G-Sec', sector: 'Macro', type: 'macro' }
+};
+
+const NIFTY_TOP20 = ['HDFCBANK:NSE', 'RELIANCE:NSE', 'ICICIBANK:NSE', 'INFY:NSE', 'TCS:NSE', 'SBIN:NSE', 'BHARTIARTL:NSE', 'LT:NSE', 'AXISBANK:NSE', 'KOTAKBANK:NSE', 'ITC:NSE', 'HINDUNILVR:NSE', 'BAJFINANCE:NSE', 'MARUTI:NSE', 'SUNPHARMA:NSE', 'ASIANPAINT:NSE', 'TITAN:NSE', 'ADANIENT:NSE', 'TATAMOTORS:NSE', 'TATASTEEL:NSE'];
+
+function extractEntities(text) {
+  const t = (text || '').toLowerCase();
+  const matched = new Map();
+  
+  for (const [key, entity] of Object.entries(ENTITY_MAP)) {
+    let idx = 0;
+    while ((idx = t.indexOf(key, idx)) !== -1) {
+      const before = idx === 0 ? '' : t[idx - 1];
+      const after = idx + key.length >= t.length ? '' : t[idx + key.length];
+      const isAlphanumeric = (c) => /[a-z0-9]/.test(c);
+      
+      if (!isAlphanumeric(before) && !isAlphanumeric(after)) {
+        matched.set(entity.symbol, entity);
+        break;
+      }
+      idx += key.length;
+    }
+  }
+  return Array.from(matched.values());
+}
+
+function getSourceRank(sourceName) {
+  const n = (sourceName || '').toLowerCase();
+  if (n.includes('reuters') || n.includes('bloomberg')) return 0;
+  if (n.includes('economic times') || n.includes('et ') || n.includes('business standard') || n.includes('livemint')) return 1;
+  if (n.includes('moneycontrol') || n.includes('mc ') || n.includes('cnbc')) return 2;
+  return 3;
 }
 
 async function fetchCategoryNews(cat) {
@@ -1358,28 +2086,106 @@ async function fetchCategoryNews(cat) {
   let allItems  = [];
   results.forEach(r => { if (r.status === 'fulfilled') allItems = allItems.concat(r.value); });
 
-  const seen   = new Set();
-  const deduped = allItems.filter(item => {
-    const key = item.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40);
-    if (seen.has(key)) return false;
-    seen.add(key);
+  let processed = allItems.map(item => {
+    const parsedTs = parseRssDate(item.pubDate).getTime();
+    const ageHours = (Date.now() - parsedTs) / (1000 * 60 * 60);
+    const entities = extractEntities(item.title + ' ' + item.description);
+    const baseScore = scoreRelevance(item.title + ' ' + item.description, cat);
+    
+    let scoreAdd = 0;
+    const hasIndex = entities.some(e => e.type === 'index');
+    const hasMacro = entities.some(e => e.type === 'macro');
+    const hasTopStock = entities.some(e => e.type === 'stock' && NIFTY_TOP20.includes(e.symbol));
+    const hasStock = entities.some(e => e.type === 'stock');
+    
+    if (hasIndex) scoreAdd += 3;
+    if (hasTopStock) scoreAdd += 2;
+    if (hasMacro) scoreAdd += 1;
+    if (hasStock && hasMacro) scoreAdd += 2;
+    if (ageHours > 8) scoreAdd -= 2;
+    else if (ageHours > 4) scoreAdd -= 1;
+    
+    return {
+      ...item,
+      parsedTs,
+      sourceRank: getSourceRank(item.source),
+      baseScore,
+      enrichedScore: baseScore + scoreAdd,
+      entities,
+      tags: entities.slice(0, 4).map(e => e.label),
+    };
+  });
+
+  // Step 1: Exact duplicate removal
+  const exactSeen = new Set();
+  processed = processed.filter(item => {
+    const hash = item.title.toLowerCase().replace(/[^\w\s]|_/g, '').replace(/\s+/g, ' ').slice(0, 50);
+    if (exactSeen.has(hash)) return false;
+    exactSeen.add(hash);
     return true;
   });
 
-  const scored = deduped.map(item => ({
-    ...item,
-    score:    scoreRelevance(item.title + ' ' + item.description, cat),
-    parsedTs: parseRssDate(item.pubDate).getTime(),
-  }));
-  scored.sort((a, b) => b.parsedTs !== a.parsedTs ? b.parsedTs - a.parsedTs : b.score - a.score);
+  // Step 2: Near-duplicate grouping
+  const stopwords = new Set(['the','and','for','with','that','this','from','have','been','will','after','into','over','about','their','which','when']);
+  const getSigWords = (title) => {
+     return title.toLowerCase().replace(/[^\w\s]|_/g, '').split(/\s+/).filter(w => w.length > 4 && !stopwords.has(w));
+  };
+  
+  const dropIndices = new Set();
+  for (let i = 0; i < processed.length; i++) {
+    if (dropIndices.has(i)) continue;
+    const wordsI = new Set(getSigWords(processed[i].title));
+    
+    for (let j = i + 1; j < processed.length; j++) {
+      if (dropIndices.has(j)) continue;
+      const wordsJ = getSigWords(processed[j].title);
+      let shared = 0;
+      for (const w of wordsJ) { if (wordsI.has(w)) shared++; }
+      
+      if (shared >= 4) {
+         const itemI = processed[i];
+         const itemJ = processed[j];
+         const timeDiff = Math.abs(itemI.parsedTs - itemJ.parsedTs) / (1000 * 60 * 60);
+         
+         if (itemI.sourceRank === itemJ.sourceRank || timeDiff > 2) {
+           // Keep both
+         } else if (itemI.sourceRank < itemJ.sourceRank) {
+           dropIndices.add(j);
+         } else {
+           dropIndices.add(i);
+           break;
+         }
+      }
+    }
+  }
+  
+  processed = processed.filter((_, idx) => !dropIndices.has(idx));
 
-  return scored.slice(0, 20).map(item => ({
+  // Step 3: Source diversity cap
+  processed.sort((a, b) => b.enrichedScore - a.enrichedScore);
+  
+  const sourceCount = {};
+  const finalItems = [];
+  for (const item of processed) {
+    const s = item.source;
+    sourceCount[s] = (sourceCount[s] || 0) + 1;
+    if (sourceCount[s] <= 5) {
+      finalItems.push(item);
+    }
+  }
+
+  finalItems.sort((a, b) => b.enrichedScore - a.enrichedScore);
+
+  return finalItems.slice(0, 20).map(item => ({
     headline:  item.title,
     body:      item.description || '',
     source:    item.source,
     url:       item.link,
     sentiment: sentimentFromText(item.title + ' ' + item.description),
-    tags:      extractTags(item.title, cat),
+    tags:      item.tags,
+    entities:  item.entities,
+    enrichedScore: item.enrichedScore,
+    sourceRank: item.sourceRank,
     pubDate:   item.pubDate,
     freshness: 'RSS',
   }));
@@ -1542,6 +2348,355 @@ app.get('/api/lockin', async (req, res) => {
     if (stale) return res.json(stale.data);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── LIVE EVENTS CALENDAR ─────────────────────────────────────
+const MARKET_EVENTS = [
+  // RBI MPC
+  { id: 'rbi-1', category: 'rbi', title: 'RBI MPC Meeting', date: '2025-04-06', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  { id: 'rbi-2', category: 'rbi', title: 'RBI MPC Meeting', date: '2025-06-06', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  { id: 'rbi-3', category: 'rbi', title: 'RBI MPC Meeting', date: '2025-08-08', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  { id: 'rbi-4', category: 'rbi', title: 'RBI MPC Meeting', date: '2025-10-08', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  { id: 'rbi-5', category: 'rbi', title: 'RBI MPC Meeting', date: '2025-12-05', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  { id: 'rbi-6', category: 'rbi', title: 'RBI MPC Meeting', date: '2026-02-06', time: '10:00', impact: 'critical', note: 'Repo rate decision — affects banking stocks, bond yields, and rupee', recurringRule: null },
+  // FOMC
+  { id: 'fomc-1', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-01-29', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-2', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-03-19', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-3', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-05-07', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-4', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-06-18', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-5', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-07-30', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-6', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-09-17', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-7', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-10-29', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  { id: 'fomc-8', category: 'fomc', title: 'US Fed Interest Rate Decision', date: '2025-12-10', time: '23:30', impact: 'high', note: 'US rate decision — drives FII flows into India and USD/INR direction', recurringRule: null },
+  // F&O Expiry
+  { id: 'expiry', category: 'expiry', title: 'Monthly F&O Expiry', date: '2025-01-30', time: '15:30', impact: 'high', note: 'Monthly derivatives expiry — elevated volatility expected, especially in Bank Nifty', recurringRule: { type: 'monthly_last_thursday' } },
+  // MSCI
+  { id: 'msci-1', category: 'msci', title: 'MSCI Quarterly Rebalancing', date: '2025-02-28', time: '15:30', impact: 'moderate', note: 'Passive FII flows adjust index weights — watch for large block trades', recurringRule: { type: 'quarterly' } },
+  // Union Budget
+  { id: 'budget-1', category: 'budget', title: 'Union Budget Presentation', date: '2025-02-01', time: '11:00', impact: 'critical', note: 'Fiscal policy announcement — sector-level impact across the board', recurringRule: { type: 'annual' } },
+  // Earnings Season
+  { id: 'earn-1', category: 'earnings_season', title: 'Q4 FY26 Earnings Season Kickoff', date: '2026-04-10', time: '09:15', impact: 'high', note: 'Major corporate results — expect elevated single-stock volatility', recurringRule: null },
+  // Holidays
+  { id: 'hol-1', category: 'holiday', title: 'Market Holiday: Mahashivratri', date: '2025-02-26', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-2', category: 'holiday', title: 'Market Holiday: Holi', date: '2025-03-14', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-3', category: 'holiday', title: 'Market Holiday: Id-ul-Fitr', date: '2025-03-31', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-4', category: 'holiday', title: 'Market Holiday: Mahavir Jayanti', date: '2025-04-10', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-5', category: 'holiday', title: 'Market Holiday: Dr. Ambedkar Jayanti', date: '2025-04-14', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-6', category: 'holiday', title: 'Market Holiday: Good Friday', date: '2025-04-18', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-7', category: 'holiday', title: 'Market Holiday: Maharashtra Day', date: '2025-05-01', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-8', category: 'holiday', title: 'Market Holiday: Independence Day', date: '2025-08-15', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-9', category: 'holiday', title: 'Market Holiday: Ganesh Chaturthi', date: '2025-08-27', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-10', category: 'holiday', title: 'Market Holiday: Gandhi Jayanti', date: '2025-10-02', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-11', category: 'holiday', title: 'Market Holiday: Diwali Balipratipada', date: '2025-10-21', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-12', category: 'holiday', title: 'Market Holiday: Gurunanak Jayanti', date: '2025-11-05', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null },
+  { id: 'hol-13', category: 'holiday', title: 'Market Holiday: Christmas', date: '2025-12-25', time: null, impact: 'moderate', note: 'NSE closed — thin pre/post holiday trading expected', recurringRule: null }
+];
+
+function getNextLastThursday(fromDate) {
+  const d = new Date(fromDate);
+  d.setMonth(d.getMonth() + 1);
+  d.setDate(1);
+  const nextMonth = d.getMonth();
+  d.setMonth(nextMonth + 1);
+  d.setDate(0);
+  while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+function processEvents() {
+  const now = new Date();
+  const events = [];
+  
+  for (let ev of MARKET_EVENTS) {
+    let d = new Date(`${ev.date}T${ev.time || '00:00'}:00+05:30`);
+    
+    if (ev.recurringRule && d < now) {
+      if (ev.recurringRule.type === 'monthly_last_thursday') {
+        while (d < now) {
+          d = getNextLastThursday(d);
+          d.setHours(15, 30, 0, 0);
+        }
+      } else if (ev.recurringRule.type === 'quarterly') {
+        while (d < now) d.setMonth(d.getMonth() + 3);
+      } else if (ev.recurringRule.type === 'annual') {
+        while (d < now) d.setFullYear(d.getFullYear() + 1);
+      }
+    }
+    
+    if (d < now) continue;
+    
+    const diffMs = d - now;
+    const daysUntil = Math.ceil(diffMs / 86400000);
+    const hoursUntil = daysUntil <= 1 ? Math.ceil(diffMs / 3600000) : null;
+    
+    let urgency = 'distant';
+    if (daysUntil === 0) urgency = 'today';
+    else if (daysUntil <= 2) urgency = 'imminent';
+    else if (daysUntil <= 7) urgency = 'soon';
+    else if (daysUntil <= 30) urgency = 'upcoming';
+    
+    const h = now.getHours();
+    const m = now.getMinutes();
+    const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
+    const timeNum = h * 100 + m;
+    const marketIsOpen = isWeekday && (timeNum >= 915 && timeNum <= 1530);
+    
+    events.push({
+      ...ev,
+      date: d.toISOString().split('T')[0],
+      daysUntil,
+      hoursUntil,
+      isPast: false,
+      urgency,
+      marketIsOpen
+    });
+  }
+  
+  events.sort((a, b) => {
+    const da = new Date(`${a.date}T${a.time || '00:00'}:00+05:30`);
+    const db = new Date(`${b.date}T${b.time || '00:00'}:00+05:30`);
+    return da - db;
+  });
+  
+  return events;
+}
+
+app.get('/api/events', (req, res) => {
+  setApiCacheHeaders(res, 5, 30);
+  if (isFresh('events_cache', 300_000)) return res.json(getCache('events_cache').data);
+  
+  const upcoming = processEvents();
+  const next3 = upcoming.slice(0, 3);
+  const todayEvents = upcoming.filter(e => e.daysUntil === 0);
+  const thisWeekCount = upcoming.filter(e => e.daysUntil <= 7).length;
+  
+  const out = {
+    upcoming,
+    next3,
+    todayEvents,
+    thisWeekCount,
+    ts: new Date().toISOString()
+  };
+  setCache('events_cache', out);
+  res.json(out);
+});
+
+app.get('/api/events/impact', (req, res) => {
+  setApiCacheHeaders(res, 5, 30);
+  if (isFresh('events_impact_cache', 300_000)) return res.json(getCache('events_impact_cache').data);
+  
+  const upcoming = processEvents().filter(e => e.daysUntil <= 7);
+  let highCount = 0;
+  let critCount = 0;
+  let modCount = 0;
+  const cats = new Set();
+  
+  upcoming.forEach(e => {
+    if (e.impact === 'critical') critCount++;
+    if (e.impact === 'high') highCount++;
+    if (e.impact === 'moderate') modCount++;
+    cats.add(e.category);
+  });
+  
+  let eventDensity = 'quiet';
+  if (critCount > 0) eventDensity = 'critical week';
+  else if (highCount >= 2) eventDensity = 'busy';
+  else if (highCount === 1 || modCount >= 2) eventDensity = 'normal';
+  
+  let headline = 'No major market events this week.';
+  const catNames = { rbi: 'RBI MPC', fomc: 'Fed FOMC', expiry: 'F&O Expiry', msci: 'MSCI Rebal', budget: 'Union Budget', earnings_season: 'Earnings Season', holiday: 'Market Holiday' };
+  
+  if (upcoming.length > 0) {
+    const names = Array.from(cats).map(c => catNames[c] || c);
+    if (eventDensity === 'critical week' || eventDensity === 'busy') {
+      headline = `${names.join(' + ')} this week — expect elevated volatility`;
+    } else {
+      headline = `${names.join(' & ')} approaching — positioning adjustments expected`;
+    }
+  }
+  
+  const out = {
+    highImpactCount: highCount + critCount,
+    eventDensity,
+    headline,
+    ts: new Date().toISOString()
+  };
+  setCache('events_impact_cache', out);
+  res.json(out);
+});
+
+// ── BRIDGE SIGNAL ─────────────────────────────────────────────
+app.get('/api/bridge-signal', async (req, res) => {
+  setApiCacheHeaders(res, 5, 15);
+  if (isFresh('bridge_signal', 15_000)) return res.json(getCache('bridge_signal').data);
+
+  let freshness = 'LIVE';
+  let score = 50;
+  let factors = [];
+  
+  // Parallel Fetch — all use existing caches
+  const [fastRes, globalRes, fiidiiRes, eventsRes, vixRes] = await Promise.allSettled([
+    (async () => isFresh('indices_fast', TTL.INDICES_FAST) ? getCache('indices_fast').data : getIndicesFastData())(),
+    (async () => isFresh('global', TTL.GLOBAL) ? getCache('global').data : getGlobalData())(),
+    (async () => isFresh('fiidii', TTL.FIIDII) ? getCache('fiidii').data : getFiiDiiData())(),
+    (async () => {
+      if (isFresh('events_cache', 300_000)) return getCache('events_cache').data;
+      const upcoming = processEvents();
+      return { upcoming, next3: upcoming.slice(0, 3) };
+    })(),
+    (async () => isFresh('india_vix_quote', TTL.QUOTE) ? getCache('india_vix_quote').data : getIndiaVixQuote())()
+  ]);
+
+  const failCount = [fastRes, globalRes, fiidiiRes, eventsRes, vixRes].filter(r => r.status === 'rejected').length;
+  if (failCount > 0 && failCount < 5) freshness = 'PARTIAL';
+
+  const fastData   = fastRes.status   === 'fulfilled' ? fastRes.value   : null;
+  const glData     = globalRes.status === 'fulfilled' ? globalRes.value : null;
+  const fiiData    = fiidiiRes.status === 'fulfilled' ? fiidiiRes.value : null;
+  const eventsData = eventsRes.status === 'fulfilled' ? eventsRes.value : null;
+  const vixData    = vixRes.status    === 'fulfilled' ? vixRes.value    : null;
+
+  if (!fastData && !glData && !fiiData && !eventsData && !vixData) freshness = 'FALLBACK';
+
+  let vixVal = null;
+  let niftyChg = null;
+  let fiiNetVal = null;
+  let nearestEvent = eventsData?.next3?.[0] || null;
+
+  // 1. Global overnight — keys are SP500, NASDAQ (uppercase)
+  if (glData && glData.SP500) {
+    const sp500Chg = parseFloat(glData.SP500.percent_change) || 0;
+    const ndxChg = glData.NASDAQ ? (parseFloat(glData.NASDAQ.percent_change) || 0) : 0;
+    
+    let impact = 0;
+    let label = '';
+    
+    if (sp500Chg > 0.5) {
+      impact = 5;
+      label = `US markets rose ${sp500Chg.toFixed(1)}%`;
+      if (ndxChg > 0.5) { impact += 3; label += ` led by Tech`; }
+    } else if (sp500Chg < -0.5) {
+      impact = -5;
+      label = `US markets fell ${sp500Chg.toFixed(1)}%`;
+      if (sp500Chg < -1.5) impact -= 5;
+      if (ndxChg < -0.5) { impact -= 3; label += ` with Tech weakness`; }
+    }
+    
+    if (impact !== 0) {
+      score += impact;
+      factors.push({ label, impact: Math.abs(impact), direction: impact > 0 ? 'positive' : 'negative' });
+    }
+  }
+
+  // 2. India VIX — from dedicated getIndiaVixQuote
+  if (vixData && vixData.price) {
+    vixVal = vixData.price;
+    let impact = 0;
+    if (vixVal < 12) impact = 8;
+    else if (vixVal >= 12 && vixVal < 15) impact = 3;
+    else if (vixVal >= 18 && vixVal <= 22) impact = -8;
+    else if (vixVal > 22) impact = -15;
+
+    if (impact !== 0) {
+      score += impact;
+      factors.push({ label: `India VIX at ${vixVal.toFixed(1)}`, impact: Math.abs(impact), direction: impact > 0 ? 'positive' : 'negative' });
+    }
+  }
+
+  // 3. Nifty change — from fast indices (key is NIFTY:NSE inside .indices)
+  if (fastData && fastData.indices && fastData.indices['NIFTY:NSE']) {
+    niftyChg = fastData.indices['NIFTY:NSE'].percent_change ?? null;
+  }
+
+  // 4. FII Flow — from getFiiDiiData().today.fii_net
+  if (fiiData && fiiData.today && fiiData.today.fii_net !== undefined) {
+    fiiNetVal = fiiData.today.fii_net;
+    let impact = 0;
+    if (fiiNetVal > 3000) impact = 10;
+    else if (fiiNetVal >= 1000 && fiiNetVal <= 3000) impact = 5;
+    else if (fiiNetVal >= 0 && fiiNetVal < 1000) impact = 2;
+    else if (fiiNetVal >= -1000 && fiiNetVal < 0) impact = -2;
+    else if (fiiNetVal > -3000 && fiiNetVal < -1000) impact = -5;
+    else if (fiiNetVal <= -3000) impact = -10;
+
+    if (impact !== 0) {
+      score += impact;
+      const absVal = Math.abs(Math.round(fiiNetVal)).toLocaleString('en-IN');
+      factors.push({ label: `FII ${fiiNetVal >= 0 ? 'Bought' : 'Sold'} ₹${absVal}Cr`, impact: Math.abs(impact), direction: impact > 0 ? 'positive' : 'negative' });
+    }
+  }
+
+  // 5. USD/INR — global data key (check for USDINR or similar)
+  // Note: USD/INR is not in GLOBAL map — it's in SYMBOLS as a dashboard quote
+  // Use the dashboard quotes cache if available
+  const quotesCache = getCache('quotes')?.data;
+  if (quotesCache && quotesCache['USD/INR:Forex']) {
+    const rupeeChg = parseFloat(quotesCache['USD/INR:Forex'].percent_change) || 0;
+    let impact = 0;
+    if (rupeeChg < 0) impact = 3; // Strengthening (lower USD/INR = stronger rupee)
+    else if (rupeeChg > 0.3) impact = -4; // Weakening
+
+    if (impact !== 0) {
+      score += impact;
+      factors.push({ label: `Rupee ${impact > 0 ? 'Stronger' : 'Weaker'}`, impact: Math.abs(impact), direction: impact > 0 ? 'positive' : 'negative' });
+    }
+  }
+
+  // 6. Events — upcoming critical/high impact within 1 day
+  if (nearestEvent && nearestEvent.daysUntil <= 1) {
+    let impact = 0;
+    if (nearestEvent.impact === 'critical') impact = -5;
+    else if (nearestEvent.impact === 'high') impact = -3;
+    
+    if (impact !== 0) {
+      score += impact;
+      factors.push({ label: `${nearestEvent.title} approaching`, impact: Math.abs(impact), direction: 'neutral' });
+    }
+  }
+
+  // Clamp & Sort
+  score = Math.max(0, Math.min(100, score));
+  factors.sort((a, b) => b.impact - a.impact);
+
+  let labelStr = '';
+  let subtextStr = '';
+  if (score >= 85) { labelStr = 'HIGH SIGNAL DAY'; subtextStr = 'Multiple aligned signals — worth tracking closely'; }
+  else if (score >= 65) { labelStr = 'ACTIVE SETUP'; subtextStr = 'Directional bias is forming'; }
+  else if (score >= 45) { labelStr = 'MIXED TAPE'; subtextStr = 'Signals conflict — monitor key levels'; }
+  else if (score >= 25) { labelStr = 'WAIT AND WATCH'; subtextStr = 'No clear edge — patience is the position'; }
+  else { labelStr = 'LOW SIGNAL DAY'; subtextStr = 'Quiet conditions — check back at open'; }
+
+  let bias = 'NEUTRAL';
+  if (score >= 60) bias = 'BULLISH';
+  else if (score <= 40) bias = 'BEARISH';
+
+  let dominantReason = subtextStr;
+  if (factors.length > 0) {
+    const top = factors[0];
+    if (top.label.includes('VIX')) dominantReason = `${top.label} — options market pricing in ${top.direction === 'positive' ? 'calm' : 'elevated risk'}`;
+    else if (top.label.includes('FII')) dominantReason = `${top.label} — ${top.direction === 'positive' ? 'strongest institutional session recently' : 'institutional selling pressure'}`;
+    else if (top.label.includes('US markets')) dominantReason = `${top.label} overnight — expect gap-${top.direction === 'positive' ? 'up' : 'down'} open`;
+    else if (top.label.includes('approaching')) dominantReason = `${top.label} — market in wait mode`;
+    else dominantReason = top.label;
+  }
+
+  const out = {
+    score,
+    label: labelStr,
+    subtext: subtextStr,
+    bias,
+    dominantReason,
+    factors: factors.slice(0, 3),
+    nearestEvent,
+    indiaVix: vixVal,
+    niftyChange: niftyChg,
+    fiiNet: fiiNetVal,
+    ts: new Date().toISOString(),
+    freshness
+  };
+
+  setCache('bridge_signal', out);
+  res.json(out);
 });
 
 // ── DEBUG (dev only) ─────────────────────────────────────────

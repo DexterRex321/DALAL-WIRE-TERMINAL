@@ -56,6 +56,18 @@
     <span class="ti"><span class="ts">SENSEX</span><span id="tk-sensex2"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
   </span></div>
 
+  <div id="events-strip">
+    <div id="events-strip-label">EVENTS</div>
+    <div id="events-strip-items">
+      <!-- populated by JS -->
+    </div>
+    <button id="events-strip-more" 
+      onclick="switchRP('events')"
+      title="Full calendar">
+      ALL →
+    </button>
+  </div>
+
   <div id="body">
     <div id="sidebar">
       <div class="ph">
@@ -110,6 +122,7 @@
           <span class="pt" id="hl-label">MARKET NEWS</span>
           <span style="display:flex;align-items:center;gap:8px">
             <span style="color:var(--dim);font-size:10px;letter-spacing:0.1em" id="hl-count">—</span>
+            <span id="news-watchlist-toggle" onclick="toggleNewsWatchlist()" title="Filter by watchlist">★</span>
             <span onclick="refreshNews()" title="Refresh news" style="color:var(--orange);cursor:pointer;font-size:12px;padding:2px 8px;border:1px solid var(--line2);background:var(--bg1)">↻</span>
           </span>
         </div>
@@ -118,15 +131,21 @@
     </div>
 
     <div id="right-panel">
-      <div id="rp-tabs">
-        <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
-        <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
-        <span class="rp-tab" data-rp="global" onclick="switchRP('global')">GLOBAL</span>
-        <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')">HEATMAP</span>
-        <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')">MF/ETF</span>
-        <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
-        <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')">LOCK-IN</span>
-        <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')">SENTIMENT</span>
+      <div id="rp-tabs-container">
+        <div id="rp-tabs">
+          <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
+          <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
+          <span class="rp-tab" data-rp="global" onclick="switchRP('global')">GLOBAL</span>
+          <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')">HEATMAP</span>
+          <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')">MF/ETF</span>
+          <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
+          <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')">LOCK-IN</span>
+          <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')">SENTIMENT</span>
+          <span class="rp-tab" data-rp="sop" onclick="switchRP('sop')">SOP</span>
+          <span class="rp-tab" data-rp="compare" onclick="switchRP('compare')">COMPARE</span>
+          <span class="rp-tab" data-rp="events" onclick="switchRP('events')">EVENTS</span>
+        </div>
+        <button id="rp-tabs-arrow" aria-label="Scroll tabs right" onclick="scrollTabsRight()">›</button>
       </div>
 
       <div id="rp-ticker-row">
@@ -183,7 +202,7 @@
             </div>
           </div>
 
-          <div id="rp-earnings" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+          <div id="story-earnings-section" style="display:none" hidden>
             <div style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px;margin-bottom:14px">EARNINGS CALENDAR — Q4 FY26</div>
             <div id="earnings-content"></div>
           </div>
@@ -309,6 +328,81 @@
   <div style="padding:20px;text-align:center;color:#444;font-size:13px">Loading sentiment data...</div>
 </div>
 
+          <div id="rp-sop" style="display:none">
+            <div id="sop-profile-display">
+              <div class="sop-profile-name">ADAPTIVE</div>
+              <div class="sop-profile-dots">
+                <span class="sop-dot" data-sop-dot="horizon"></span>
+                <span class="sop-dot" data-sop-dot="signal"></span>
+                <span class="sop-dot" data-sop-dot="risk"></span>
+              </div>
+            </div>
+            <div id="sop-sliders">
+              <div class="sop-slider-row">
+                <span class="sop-slider-label">INTRADAY</span>
+                <div class="sop-range-wrap">
+                  <input id="sop-horizon" class="sop-range" type="range" min="0" max="100" value="50" oninput="updateSopSliders()" />
+                  <span class="sop-position-dot" data-sop-pos="horizon"></span>
+                </div>
+                <span class="sop-slider-label right">LONG TERM</span>
+              </div>
+              <div class="sop-slider-row">
+                <span class="sop-slider-label">TECHNICAL</span>
+                <div class="sop-range-wrap">
+                  <input id="sop-signal" class="sop-range" type="range" min="0" max="100" value="50" oninput="updateSopSliders()" />
+                  <span class="sop-position-dot" data-sop-pos="signal"></span>
+                </div>
+                <span class="sop-slider-label right">FUNDAMENTAL</span>
+              </div>
+              <div class="sop-slider-row">
+                <span class="sop-slider-label">DEFENSIVE</span>
+                <div class="sop-range-wrap">
+                  <input id="sop-risk" class="sop-range" type="range" min="0" max="100" value="50" oninput="updateSopSliders()" />
+                  <span class="sop-position-dot" data-sop-pos="risk"></span>
+                </div>
+                <span class="sop-slider-label right">AGGRESSIVE</span>
+              </div>
+            </div>
+            <div id="sop-brief"></div>
+            <div id="sop-synthesis">Loading SOP brief...</div>
+          </div>
+
+          <div id="rp-compare" style="display:none">
+            <div id="compare-builder">
+              <div class="compare-builder-row">
+                <div class="compare-select-wrap" id="cmp-a-wrap">
+                  <div class="compare-select-label">SERIES A</div>
+                  <select id="cmp-a" class="compare-select"></select>
+                </div>
+                <div class="compare-vs">VS</div>
+                <div class="compare-select-wrap" id="cmp-b-wrap">
+                  <div class="compare-select-label">SERIES B</div>
+                  <select id="cmp-b" class="compare-select"></select>
+                </div>
+                <button id="compare-run-btn" onclick="runCompare()">COMPARE</button>
+              </div>
+              <div id="compare-quick-pairs"></div>
+            </div>
+            <div id="compare-interpretation" class="compare-tone-neutral">Loading comparison...</div>
+            <div id="compare-chart">
+              <div class="compare-chart-head">
+                <span class="compare-axis-label" id="compare-axis-left">NIFTY</span>
+                <span class="compare-axis-label" id="compare-axis-right">SERIES B</span>
+              </div>
+              <canvas id="compare-canvas" class="compare-dual-canvas" height="160"></canvas>
+            </div>
+            <div id="compare-meta"></div>
+            <div id="compare-table"></div>
+          </div>
+
+          <div id="rp-events">
+            <div id="events-impact-banner"></div>
+            <div id="events-filter-row">
+              <!-- category filter chips -->
+            </div>
+            <div id="events-list"></div>
+          </div>
+
     </div>
   </div>
 
@@ -333,13 +427,9 @@
     <a href="/terminal" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--orange);font-size:10px;letter-spacing:.12em;border-bottom:1px solid var(--line);background:rgba(255,102,0,.04)">
       <span style="font-size:14px">◈</span>DALAL WIRE <span style="margin-left:auto;color:var(--dim);font-size:9px">● HERE</span>
     </a>
-    <a href="https://finance.worldmonitor.app/?variant=finance&amp;preset=dalal" onclick="this.href = window.getWorldMonitorStandaloneUrl ? window.getWorldMonitorStandaloneUrl() : this.href" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--blue);font-size:10px;letter-spacing:.12em;transition:none">
-      <span style="font-size:14px">◎</span>WORLD MONITOR
-    </a>
   </div>
 
 </div>
-<div id="focus-esc-hint" aria-hidden="true">ESC TO EXIT FOCUS</div>
 <style>
   #nav-pill:hover{border-color:var(--muted);color:var(--text)}
   #nav-panel.open{display:block!important;}

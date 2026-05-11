@@ -200,6 +200,25 @@ function decorateMacroRows() {
     const wrap = document.createElement('span'); wrap.className = 'mk-wrap'; labelEl.replaceWith(wrap); wrap.appendChild(labelEl);
     const tag = document.createElement('span'); tag.className = 'truth-tag ' + truthTagClass(item.tag); tag.textContent = item.tag; wrap.appendChild(tag);
   });
+  applyMacroContextBadges();
+}
+
+function applyMacroContextBadges() {
+  if (!macroContext?.cards) return;
+  document.querySelectorAll('#macro-list .macro-row').forEach((row, i) => {
+    const item = sidebarMacro[i];
+    const card = item ? macroContext.cards[item.key] : null;
+    if (!card) return;
+    let badge = row.querySelector('.macro-implication-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'macro-implication-badge';
+      row.appendChild(badge);
+    }
+    badge.textContent = card.badge;
+    badge.title = card.implication;
+    badge.className = 'macro-implication-badge ' + (card.signal === 'tailwind' ? 'is-tailwind' : card.signal === 'headwind' ? 'is-headwind' : 'is-neutral');
+  });
 }
 
 function attachDrag(el, section, i) {
@@ -356,7 +375,16 @@ let miniVixSeries = [];
 let miniGsecSeries = [];
 let commoditiesData = null;
 let lockinData = null;
-let manualPulseRoute = null;
+let compareState = { a: 'FII', b: 'NIFTY', data: null, fetching: false };
+let compareInitialized = false;
+let sopState = { sliders: { horizon: 50, signal: 50, risk: 50 }, data: null, lastFetch: 0, profile: null };
+let sopDeltaState = { history: null, snapshot: null, deltas: null, lastFetch: 0 };
+let macroContext = null;
+let fastRefreshTimer = null;
+let slowRefreshTimer = null;
+let countdownTimer = null;
+let compareResizeObserver = null;
+let compareLastWidth = 0;
 let headlinesEmptyState = { title: 'No live stories yet', detail: 'Refresh the current feed or switch categories.' };
 let dashStore = null;
 let sectionLoadState = { indices: 'loading', news: 'idle', slow: 'idle', sentiment: 'idle' };
@@ -477,6 +505,7 @@ function renderApp() {
   bodyEl.style.display = 'none';
   root.classList.toggle('state-view-detail', appState.view !== 'indices');
   renderPulse();
+  if (currentRP === 'sop' && !sopState.data) renderSopLoadingSkeleton();
   renderExplorerModal();
 }
 
@@ -699,6 +728,7 @@ window.handleModalBackdropClick = handleModalBackdropClick;
 // ── GLOBAL DATA STORE ──
 let globalData = null;
 let globalFetching = false;
+let updateArrowVisibility = null;
 
 // ── FEAR & GREED STATE ──
 let fngData = null;
@@ -725,15 +755,26 @@ function switchRP(tab, options = {}) {
     const rp = t.dataset.rp || '';
     t.classList.toggle('active-rp-tab', rp === tab);
   });
+  const activeTab = document.querySelector('.rp-tab.active-rp-tab');
+  if (activeTab) {
+    activeTab.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    });
+  }
+  setTimeout(() => {
+    if (updateArrowVisibility) updateArrowVisibility();
+  }, 400);
 
-  // FIX: Complete panels list including earnings
-  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-earnings'];
+  // Update visible right-panel module.
+  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-sop', 'rp-compare'];
   panels.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
 
-  // FIX: Complete panel map including earnings
+  // Map public tab keys to panel ids.
   const panelMap = {
     detail: 'rp-story',
     advice: 'rp-advice',
@@ -743,7 +784,8 @@ function switchRP(tab, options = {}) {
     commodities: 'rp-commodities',
     lockin: 'rp-lockin',
     feargreed: 'rp-feargreed',
-    earnings: 'rp-earnings'
+    sop: 'rp-sop',
+    compare: 'rp-compare'
   };
 
   const activePanel = document.getElementById(panelMap[tab]);
@@ -759,10 +801,27 @@ function switchRP(tab, options = {}) {
   if (tab === 'lockin') fetchLockin();
   if (tab === 'advice' && fetchAdviceOnOpen) updateAdviceForTicker(currentTicker);
   if (tab === 'feargreed') fetchFearGreed();
-  if (tab === 'earnings') renderEarnings();
+  if (tab === 'sop') {
+    initSopControls();
+    if (!sopState.data || Date.now() - sopState.lastFetch > 60_000) fetchSOPData();
+    else renderSOP();
+  }
+  if (tab === 'compare') {
+    restoreComparePair();
+    if (!compareInitialized) initCompareSelects();
+    initCompareResizeObserver();
+    const aSel = document.getElementById('cmp-a'); if (aSel) aSel.value = compareState.a;
+    const bSel = document.getElementById('cmp-b'); if (bSel) bSel.value = compareState.b;
+    initCompareQuickPairs();
+    if (!compareState.data) runCompare();
+    else renderCompare(compareState.data);
+  }
+  if (tab === 'events') {
+    if (!eventsState.data) fetchEvents();
+    else renderEventsPanel();
+  }
 
   saveLayout();
-  refreshFinanceBridge();
 }
 
 // ── GLOBAL FETCH ──
@@ -776,7 +835,6 @@ async function fetchGlobal() {
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
     const glUp = document.getElementById('gl-updated');
     if (glUp) glUp.textContent = 'Updated ' + now + ' IST';
-    refreshFinanceBridge();
     if (currentRP === 'detail' && activeIdx < 0) hydratePulseData();
   } catch (e) {
     const el = document.getElementById('gl-content');
@@ -795,7 +853,6 @@ function applyTicker() {
   const al = document.getElementById('advice-ticker-label'); if (al) al.textContent = 'LIVE SIGNAL - ' + v;
   updateAdviceForTicker(v);
   switchRP('advice');
-  refreshFinanceBridge();
 }
 
 async function updateAdviceForTicker(t) {
@@ -965,6 +1022,50 @@ function tagHtml(s) { return s === 'bull' ? '<span class="ntag t-bull">BULL</spa
 
 function setHeadlinesEmptyState(title, detail = '') { headlinesEmptyState = { title, detail }; }
 
+let newsWatchlistFilter = { active: false, symbols: [] };
+
+function toggleNewsWatchlist() {
+  newsWatchlistFilter.active = !newsWatchlistFilter.active;
+  const btn = document.getElementById('news-watchlist-toggle');
+  if (btn) {
+    if (newsWatchlistFilter.active) btn.classList.add('active');
+    else btn.classList.remove('active');
+  }
+  renderHeadlines(true);
+}
+
+function applyNewsIntelligence(stories) {
+  if (!stories) return [];
+  
+  const defaultSyms = new Set(DEFAULT_INDICES.map(item => item.sym));
+  newsWatchlistFilter.symbols = sidebarIndices
+    .filter(item => !defaultSyms.has(item.sym))
+    .map(item => item.sym.split(':')[0].toLowerCase());
+    
+  if (newsWatchlistFilter.active) {
+     const watchSet = new Set(newsWatchlistFilter.symbols);
+     const group1 = [];
+     const group2 = [];
+     
+     stories.forEach(s => {
+       let isMatch = false;
+       if (s.entities) {
+          isMatch = s.entities.some(e => watchSet.has(e.symbol.split(':')[0].toLowerCase()));
+       }
+       s.watchlistMatch = isMatch;
+       if (isMatch) group1.push(s);
+       else group2.push(s);
+     });
+     
+     group1.sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
+     group2.sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
+     return [...group1, ...group2];
+  } else {
+     stories.forEach(s => s.watchlistMatch = false);
+     return [...stories].sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
+  }
+}
+
 function renderHeadlines(resetScroll = false) {
   const list = document.getElementById('hl-list'); const countEl = document.getElementById('hl-count');
   if (!list || !countEl) return;
@@ -976,12 +1077,25 @@ function renderHeadlines(resetScroll = false) {
     list.innerHTML = `<div class="headline-empty"><div class="headline-empty-title">${headlinesEmptyState.title}</div><div class="headline-empty-copy">${headlinesEmptyState.detail}</div></div>`;
     return;
   }
+  
+  currentStories = applyNewsIntelligence(currentStories);
+  
   countEl.textContent = currentStories.length + ' STORIES';
   currentStories.forEach((s, i) => {
-    const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '');
+    const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '') + (s.watchlistMatch ? ' watchlist-match' : '');
     const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : '';
     const srcStr = s.source ? `<span class="nl-src">${s.source}</span>` : '';
-    d.innerHTML = `<div class="nl-meta">${tagHtml(s.sentiment)}<span class="nl-time">${timeStr}</span></div><div class="nl-hl">${s.headline}</div>${srcStr}`;
+    
+    let wlBadge = s.watchlistMatch ? `<span class="nl-watchlist-badge">★ WATCHLIST</span>` : '';
+    
+    let entitiesHtml = '';
+    if (s.entities && s.entities.some(e => e.type === 'stock')) {
+      entitiesHtml = `<div class="nl-entities">` + 
+        s.entities.map(e => `<span class="nl-entity-tag type-${e.type}">${e.label}</span>`).join('') + 
+        `</div>`;
+    }
+    
+    d.innerHTML = `<div class="nl-meta">${tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${timeStr}</span></div><div class="nl-hl">${s.headline}</div>${entitiesHtml}${srcStr}`;
     d.addEventListener('click', () => showDetail(i)); list.appendChild(d);
   });
   animateCollection('#hl-list .nl', { x: -10, y: 10, stagger: 0.035, duration: 0.32 });
@@ -1005,10 +1119,10 @@ function showDetail(i) {
   bodyHtml += (s.body || '').split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('');
   if (s.url) bodyHtml += `<p><a href="${s.url}" style="color:#ff6600;font-size:13px;" target="_blank">Read full article ↗</a></p>`;
   textEl.innerHTML = bodyHtml;
-  switchRP('detail'); refreshFinanceBridge();
+  switchRP('detail');
 }
 
-function clearDetail() { activeIdx = -1; renderHeadlines(); renderApp(); refreshFinanceBridge(); }
+function clearDetail() { activeIdx = -1; renderHeadlines(); renderApp(); }
 
 function loadCategory(cat, options = {}) {
   const shouldFetchNews = options.fetchNews !== false;
@@ -1019,7 +1133,7 @@ function loadCategory(cat, options = {}) {
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active-chip', c.textContent.toLowerCase() === cat));
   document.getElementById('sb-q').textContent = cat.toUpperCase() + ' — INDIA MARKET';
   if (shouldFetchNews) fetchLiveNews(cat, !forceNews);
-  saveLayout(); refreshFinanceBridge();
+  saveLayout();
 }
 
 const newsCache = {};
@@ -1027,7 +1141,7 @@ const NEWS_CLIENT_TTL = 5 * 60 * 1000;
 
 async function fetchLiveNews(cat, useCache = true) {
   const cached = newsCache[cat]; const isFresh = cached && (Date.now() - cached.ts) < NEWS_CLIENT_TTL;
-  if (useCache && isFresh) { currentStories = Array.isArray(cached.stories) ? cached.stories : []; sectionLoadState.news = 'ready'; setHeadlinesEmptyState('No cached live stories', 'Refresh the feed or try another category.'); renderHeadlines(true); renderApp(); refreshFinanceBridge(); return; }
+  if (useCache && isFresh) { currentStories = Array.isArray(cached.stories) ? cached.stories : []; sectionLoadState.news = 'ready'; setHeadlinesEmptyState('No cached live stories', 'Refresh the feed or try another category.'); renderHeadlines(true); renderApp(); return; }
   if (newsRequestController) { try { newsRequestController.abort(); } catch {} }
   const token = ++newsRequestToken;
   const controller = new AbortController();
@@ -1042,7 +1156,7 @@ async function fetchLiveNews(cat, useCache = true) {
     newsCache[cat] = { stories: currentStories, ts: Date.now() };
     sectionLoadState.news = 'ready';
     setHeadlinesEmptyState('No live stories returned', 'This feed is quiet right now. Try refreshing in a moment.');
-    renderHeadlines(true); renderApp(); refreshFinanceBridge();
+    renderHeadlines(true); renderApp();
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
     const countEl = document.getElementById('hl-count');
     if (countEl) countEl.textContent = currentStories.length ? currentStories.length + ' STORIES · LIVE RSS · ' + now : '0 STORIES · LIVE RSS';
@@ -1051,7 +1165,7 @@ async function fetchLiveNews(cat, useCache = true) {
     console.warn('Live news failed:', e.message);
     sectionLoadState.news = 'error';
     currentStories = []; setHeadlinesEmptyState('Live RSS unavailable', 'The current feed could not be loaded. Try refresh or switch categories.');
-    renderHeadlines(true); renderApp(); refreshFinanceBridge();
+    renderHeadlines(true); renderApp();
     const countEl = document.getElementById('hl-count');
     if (countEl) countEl.textContent = 'LIVE RSS UNAVAILABLE';
   } finally {
@@ -1109,6 +1223,555 @@ function renderMiniMacroCharts() {
 }
 
 // ── MARKET BREADTH BAR ──
+const COMPARE_SERIES = {
+  NIFTY: { label: 'Nifty 50', yahoo: '^NSEI', type: 'index', unit: 'pts' },
+  SENSEX: { label: 'Sensex', yahoo: '^BSESN', type: 'index', unit: 'pts' },
+  BANKNIFTY: { label: 'Bank Nifty', yahoo: '^NSEBANK', type: 'index', unit: 'pts' },
+  INDIAVIX: { label: 'India VIX', yahoo: '^INDIAVIX', type: 'volatility', unit: '' },
+  USDINR: { label: 'USD/INR', yahoo: 'INR=X', type: 'fx', unit: '₹' },
+  GOLD: { label: 'Gold', yahoo: 'GC=F', type: 'commodity', unit: '$' },
+  CRUDE: { label: 'Crude WTI', yahoo: 'CL=F', type: 'commodity', unit: '$' },
+  GSEC: { label: '10Y G-Sec', yahoo: '^IN10YT=RR', type: 'bond', unit: '%' },
+  DXY: { label: 'DXY Index', yahoo: 'DX-Y.NYB', type: 'fx', unit: '' },
+  SP500: { label: 'S&P 500', yahoo: '^GSPC', type: 'index', unit: 'pts' },
+  NASDAQ: { label: 'Nasdaq', yahoo: '^IXIC', type: 'index', unit: 'pts' },
+  FII: { label: 'FII Net Flow', yahoo: null, type: 'flow', unit: '₹Cr' },
+};
+
+const COMPARE_QUICK_PAIRS = [
+  { label: 'FII vs NIFTY', a: 'FII', b: 'NIFTY' },
+  { label: 'VIX vs NIFTY', a: 'INDIAVIX', b: 'NIFTY' },
+  { label: 'BANK vs NIFTY', a: 'BANKNIFTY', b: 'NIFTY' },
+  { label: 'CRUDE vs INR', a: 'CRUDE', b: 'USDINR' },
+  { label: 'GOLD vs DXY', a: 'GOLD', b: 'DXY' },
+];
+
+function restoreComparePair() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('dw-compare-pair') || '{}');
+    if (COMPARE_SERIES[saved.a] && COMPARE_SERIES[saved.b] && saved.a !== saved.b) {
+      compareState.a = saved.a;
+      compareState.b = saved.b;
+    }
+  } catch {}
+}
+
+function preventSameCompareSeries(changedId) {
+  if (compareState.a !== compareState.b) return;
+  const keys = Object.keys(COMPARE_SERIES);
+  const next = keys.find(key => key !== (changedId === 'cmp-a' ? compareState.b : compareState.a));
+  if (changedId === 'cmp-a') compareState.a = next;
+  else compareState.b = next;
+  const aSel = document.getElementById('cmp-a'); if (aSel) aSel.value = compareState.a;
+  const bSel = document.getElementById('cmp-b'); if (bSel) bSel.value = compareState.b;
+}
+
+function initCompareSelects() {
+  const opts = Object.entries(COMPARE_SERIES).map(([key, item]) => `<option value="${key}">${item.label}</option>`).join('');
+  const aSel = document.getElementById('cmp-a');
+  const bSel = document.getElementById('cmp-b');
+  if (!aSel || !bSel) return;
+  aSel.innerHTML = opts;
+  bSel.innerHTML = opts;
+  aSel.value = compareState.a;
+  bSel.value = compareState.b;
+  aSel.addEventListener('change', () => {
+    compareState.a = aSel.value;
+    preventSameCompareSeries('cmp-a');
+    initCompareQuickPairs();
+  });
+  bSel.addEventListener('change', () => {
+    compareState.b = bSel.value;
+    preventSameCompareSeries('cmp-b');
+    initCompareQuickPairs();
+  });
+  compareInitialized = true;
+}
+
+function initCompareQuickPairs() {
+  const root = document.getElementById('compare-quick-pairs');
+  if (!root) return;
+  root.innerHTML = COMPARE_QUICK_PAIRS.map(pair => {
+    const active = pair.a === compareState.a && pair.b === compareState.b ? ' active' : '';
+    return `<button class="compare-chip${active}" type="button" data-a="${pair.a}" data-b="${pair.b}">${pair.label}</button>`;
+  }).join('');
+  root.querySelectorAll('.compare-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      compareState.a = chip.dataset.a;
+      compareState.b = chip.dataset.b;
+      const aSel = document.getElementById('cmp-a'); if (aSel) aSel.value = compareState.a;
+      const bSel = document.getElementById('cmp-b'); if (bSel) bSel.value = compareState.b;
+      initCompareQuickPairs();
+      runCompare();
+    });
+  });
+}
+
+function compareFmt(value, item) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  const prefix = item.unit === '₹' || item.unit === '$' ? item.unit : '';
+  const suffix = item.unit && item.unit !== '₹' && item.unit !== '$' ? ' ' + item.unit : '';
+  return prefix + n.toLocaleString('en-IN', { maximumFractionDigits: item.type === 'flow' ? 0 : 2 }) + suffix;
+}
+
+function setCompareLoading(message = 'Loading comparison...') {
+  const chart = document.getElementById('compare-chart');
+  if (chart) chart.innerHTML = `<div class="compare-loading">${message}</div>`;
+}
+
+function initCompareResizeObserver() {
+  const panel = document.getElementById('rp-compare');
+  if (!panel || compareResizeObserver || typeof ResizeObserver === 'undefined') return;
+  compareLastWidth = panel.clientWidth || 0;
+  compareResizeObserver = new ResizeObserver(entries => {
+    const width = entries[0]?.contentRect?.width || 0;
+    if (!width || Math.abs(width - compareLastWidth) <= 20) return;
+    compareLastWidth = width;
+    if (compareState.data) renderCompare(compareState.data);
+  });
+  compareResizeObserver.observe(panel);
+}
+
+async function runCompare() {
+  const aSel = document.getElementById('cmp-a');
+  const bSel = document.getElementById('cmp-b');
+  if (aSel) compareState.a = aSel.value;
+  if (bSel) compareState.b = bSel.value;
+  preventSameCompareSeries('cmp-b');
+  compareState.fetching = true;
+  setCompareLoading();
+  const interp = document.getElementById('compare-interpretation');
+  if (interp) { interp.textContent = 'Reading cross-market relationship...'; interp.style.borderLeftColor = 'var(--gold, #ffbf3d)'; interp.style.background = 'rgba(255,191,61,.08)'; }
+  try {
+    const url = `/api/compare?a=${encodeURIComponent(compareState.a)}&b=${encodeURIComponent(compareState.b)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Compare feed unavailable');
+    compareState.data = data;
+    localStorage.setItem('dw-compare-pair', JSON.stringify({ a: compareState.a, b: compareState.b }));
+    initCompareQuickPairs();
+    renderCompare(data);
+  } catch (e) {
+    if (interp) { interp.textContent = e.message; interp.style.borderLeftColor = 'var(--red)'; interp.style.background = 'rgba(255,51,51,.08)'; }
+  } finally {
+    compareState.fetching = false;
+  }
+}
+window.runCompare = runCompare;
+
+function drawCompareChart(data) {
+  const chart = document.getElementById('compare-chart');
+  if (!chart) return;
+  chart.innerHTML = `<div class="compare-chart-head"><span class="compare-axis-label">${data.a.label}</span><span class="compare-axis-label">${data.b.label}</span></div><canvas id="compare-canvas" class="compare-dual-canvas" height="160"></canvas>`;
+  const canvas = document.getElementById('compare-canvas');
+  const rows = data.aligned || [];
+  if (!canvas || !rows.length) return;
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(300, chart.clientWidth - 24);
+  const height = 160;
+  canvas.width = width * dpr; canvas.height = height * dpr;
+  canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
+  const ctx = canvas.getContext('2d'); if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const pad = { l: 10, r: 78, t: 16, b: 24 };
+  const plotW = width - pad.l - pad.r;
+  const plotH = height - pad.t - pad.b;
+  const normalize = (values) => {
+    const min = Math.min(...values), max = Math.max(...values), range = (max - min) || 1;
+    return values.map(value => ((value - min) / range) * 100);
+  };
+  const buildPts = (values) => normalize(values).map((value, i) => ({ x: pad.l + (i / Math.max(values.length - 1, 1)) * plotW, y: pad.t + plotH - (value / 100) * plotH }));
+  const aPts = buildPts(rows.map(row => Number(row.a)));
+  const bPts = buildPts(rows.map(row => Number(row.b)));
+  const drawLine = (pts, color) => {
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+  };
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) { const y = pad.t + (plotH / 3) * i; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(width - pad.r, y); ctx.stroke(); }
+  drawLine(aPts, '#ff6600');
+  drawLine(bPts, '#4a9eff');
+  const labels = [0, Math.floor((rows.length - 1) / 2), rows.length - 1];
+  ctx.fillStyle = '#555550'; ctx.font = '9px IBM Plex Mono, monospace'; ctx.textAlign = 'center';
+  labels.forEach(i => ctx.fillText(rows[i].date.slice(5), pad.l + (i / Math.max(rows.length - 1, 1)) * plotW, height - 6));
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ff6600'; ctx.beginPath(); ctx.arc(width - 68, 22, 3, 0, Math.PI * 2); ctx.fill(); ctx.fillText(data.a.label, width - 60, 25);
+  ctx.fillStyle = '#4a9eff'; ctx.beginPath(); ctx.arc(width - 68, 39, 3, 0, Math.PI * 2); ctx.fill(); ctx.fillText(data.b.label, width - 60, 42);
+  const aLast = aPts[aPts.length - 1], bLast = bPts[bPts.length - 1];
+  ctx.font = '9px IBM Plex Mono, monospace';
+  ctx.fillStyle = '#ff6600'; ctx.fillText(compareFmt(rows[rows.length - 1].a, data.a), aLast.x + 6, aLast.y + 3);
+  ctx.fillStyle = '#4a9eff'; ctx.fillText(compareFmt(rows[rows.length - 1].b, data.b), bLast.x + 6, bLast.y + 3);
+}
+
+function relationshipGlyph(row, prev) {
+  if (!prev) return { text: 'BASE', cls: '' };
+  const aUp = Number(row.a) >= Number(prev.a);
+  const bUp = Number(row.b) >= Number(prev.b);
+  const text = (aUp ? '↑' : '↓') + (bUp ? '↑' : '↓');
+  return { text, cls: aUp === bUp ? 'rel-up' : 'rel-dn' };
+}
+
+function renderCompare(data) {
+  if (!data) return;
+  const interp = document.getElementById('compare-interpretation');
+  const tone = data.divergence === 'DIVERGING' ? ['var(--red)', 'rgba(255,51,51,.08)'] : data.divergence === 'CONVERGING' ? ['var(--green)', 'rgba(0,204,102,.08)'] : ['var(--gold, #ffbf3d)', 'rgba(255,191,61,.08)'];
+  if (interp) { interp.textContent = data.interpretation || ''; interp.style.borderLeftColor = tone[0]; interp.style.background = tone[1]; }
+  drawCompareChart(data);
+  const meta = document.getElementById('compare-meta');
+  const badgeClass = data.divergence === 'DIVERGING' ? 'is-diverging' : data.divergence === 'CONVERGING' ? 'is-converging' : 'is-aligned';
+  const direction = data.divergence === 'DIVERGING' ? 'MOVING APART' : data.divergence === 'CONVERGING' ? 'REALIGNING' : 'MOVING TOGETHER';
+  if (meta) meta.innerHTML = `<span class="diverge-badge ${badgeClass}">${data.divergence}</span><span>${data.sessions} SESSIONS</span><span>${direction}</span>`;
+  const table = document.getElementById('compare-table'); if (!table) return;
+  const rows = (data.aligned || []).slice(-5);
+  let html = `<div class="compare-table-head"><span>DATE</span><span>${data.a.label}</span><span>${data.b.label}</span><span>RELATIONSHIP</span></div>`;
+  html += rows.map((row, i) => {
+    const prev = data.aligned[data.aligned.length - rows.length + i - 1];
+    const rel = relationshipGlyph(row, prev);
+    return `<div class="compare-table-row"><span>${row.date}</span><span>${compareFmt(row.a, data.a)}</span><span>${compareFmt(row.b, data.b)}</span><span class="${rel.cls}">${rel.text}</span></div>`;
+  }).join('');
+  table.innerHTML = html;
+}
+
+function renderSopLoadingSkeleton() {
+  const brief = document.getElementById('sop-brief');
+  if (!brief) return;
+  brief.innerHTML = Array.from({ length: 3 }, (_, i) => `<div class="sop-section signal-neutral sop-section-skeleton"><span class="sop-section-label">${['GLOBAL SETUP', 'DOMESTIC FLOWS', 'VOLATILITY'][i]}</span><span class="sop-section-text"><span class="skel-pill sop-skel-line"></span><span class="skel-pill sop-skel-line short"></span></span></div>`).join('');
+}
+
+function clamp01(value) { return Math.max(0, Math.min(1, value)); }
+function sopNum(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+function sopFmtPct(value) { const n = sopNum(value); return (n >= 0 ? '+' : '') + n.toFixed(2) + '%'; }
+function sopFmtCr(value) { const n = sopNum(value); return (n >= 0 ? '+' : '') + Math.round(n).toLocaleString('en-IN') + ' Cr'; }
+
+function shiftSopColor(hex, riskLabel) {
+  const base = hex.replace('#', '');
+  let r = parseInt(base.slice(0, 2), 16), g = parseInt(base.slice(2, 4), 16), b = parseInt(base.slice(4, 6), 16);
+  if (riskLabel === 'DEFENSIVE') { b = Math.min(255, Math.round(b * 1.2 + 18)); r = Math.round(r * 0.88); }
+  if (riskLabel === 'AGGRESSIVE') { r = Math.min(255, Math.round(r * 1.2 + 18)); b = Math.round(b * 0.86); }
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+
+function computeProfile(sliders) {
+  const horizon = sopNum(sliders.horizon, 50);
+  const signal = sopNum(sliders.signal, 50);
+  const risk = sopNum(sliders.risk, 50);
+  const horizonLabel = horizon <= 33 ? 'INTRADAY' : horizon <= 66 ? 'MEDIUM' : 'LONG';
+  const signalLabel = signal <= 33 ? 'TECHNICAL' : signal <= 66 ? 'MIXED' : 'FUNDAMENTAL';
+  const riskLabel = risk <= 33 ? 'DEFENSIVE' : risk <= 66 ? 'MODERATE' : 'AGGRESSIVE';
+  let weights = horizon <= 33
+    ? { vix: 0.9, fii: 0.8, maDistance: 0.8, rsi: 0.9, valuation: 0.1, global: 0.6, crude: 0.4, gsec: 0.2 }
+    : horizon <= 66
+      ? { vix: 0.5, fii: 0.5, maDistance: 0.5, rsi: 0.5, valuation: 0.5, global: 0.5, crude: 0.5, gsec: 0.5 }
+      : { vix: 0.2, fii: 0.3, maDistance: 0.3, rsi: 0.2, valuation: 0.9, global: 0.4, crude: 0.6, gsec: 0.8 };
+  weights = { ...weights };
+  if (signal <= 33) {
+    weights.valuation *= 0.3;
+    weights.rsi = Math.min(1, weights.rsi * 1.5);
+    weights.maDistance = Math.min(1, weights.maDistance * 1.5);
+  } else if (signal >= 67) {
+    weights.rsi *= 0.3;
+    weights.maDistance *= 0.3;
+    weights.valuation = Math.min(1, weights.valuation * 1.5);
+  }
+  let baseColor = '#ff6600';
+  if (signalLabel === 'TECHNICAL' && horizonLabel === 'INTRADAY') baseColor = '#4a9eff';
+  else if (signalLabel === 'FUNDAMENTAL' && horizonLabel === 'LONG') baseColor = '#e6b84a';
+  const name =
+    signalLabel === 'TECHNICAL' && horizonLabel === 'INTRADAY' && riskLabel === 'AGGRESSIVE' ? 'MOMENTUM TRADER' :
+    signalLabel === 'FUNDAMENTAL' && horizonLabel === 'LONG' && riskLabel === 'DEFENSIVE' ? 'VALUE INVESTOR' :
+    signalLabel === 'TECHNICAL' && horizonLabel === 'MEDIUM' && riskLabel === 'MODERATE' ? 'SWING TRADER' :
+    signalLabel === 'FUNDAMENTAL' && horizonLabel === 'MEDIUM' && riskLabel === 'MODERATE' ? 'GROWTH INVESTOR' :
+    horizonLabel === 'LONG' && riskLabel === 'DEFENSIVE' ? 'CONSERVATIVE' :
+    signalLabel === 'TECHNICAL' && horizonLabel === 'INTRADAY' && riskLabel === 'DEFENSIVE' ? 'SCALPER' :
+    'ADAPTIVE';
+  return {
+    name,
+    horizonLabel: horizonLabel === 'MEDIUM' && horizon < 50 ? 'SHORT' : horizonLabel,
+    signalLabel,
+    riskLabel,
+    weights,
+    accentColor: shiftSopColor(baseColor, riskLabel),
+    outputStyle: horizon <= 33 ? 'terse' : horizon >= 67 ? 'contextual' : 'balanced'
+  };
+}
+
+function restoreSopSliders() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('dw-sop-sliders') || '{}');
+    ['horizon', 'signal', 'risk'].forEach(key => {
+      const value = Number(saved[key]);
+      if (Number.isFinite(value)) sopState.sliders[key] = Math.max(0, Math.min(100, value));
+    });
+  } catch {}
+}
+
+function updateSopSliders() {
+  const ids = { horizon: 'sop-horizon', signal: 'sop-signal', risk: 'sop-risk' };
+  Object.entries(ids).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    if (el) sopState.sliders[key] = Number(el.value);
+  });
+  sopState.profile = computeProfile(sopState.sliders);
+  const panel = document.getElementById('rp-sop');
+  if (panel) panel.style.setProperty('--sop-accent', sopState.profile.accentColor);
+  Object.entries(ids).forEach(([key, id]) => {
+    const value = sopState.sliders[key];
+    const input = document.getElementById(id);
+    if (input) input.style.setProperty('--pct', value + '%');
+    const pos = document.querySelector(`[data-sop-pos="${key}"]`);
+    if (pos) pos.style.setProperty('--pct', value + '%');
+    const dot = document.querySelector(`[data-sop-dot="${key}"]`);
+    if (dot) dot.style.opacity = String(0.3 + (value / 100) * 0.7);
+  });
+  const name = document.querySelector('.sop-profile-name');
+  if (name) name.textContent = sopState.profile.name;
+  localStorage.setItem('dw-sop-sliders', JSON.stringify(sopState.sliders));
+  if (sopState.data) renderSOP();
+}
+window.updateSopSliders = updateSopSliders;
+
+function initSopControls() {
+  restoreSopSliders();
+  const ids = { horizon: 'sop-horizon', signal: 'sop-signal', risk: 'sop-risk' };
+  Object.entries(ids).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = sopState.sliders[key];
+  });
+  updateSopSliders();
+}
+
+async function fetchSOPHistory() {
+  try {
+    const res = await fetch('/api/sop-history');
+    const data = await res.json();
+    sopDeltaState.history = data;
+    computeDeltas();
+    if (currentRP === 'sop') renderSOP();
+  } catch (e) {
+    console.warn('SOP History failed', e);
+    computeDeltas();
+    if (currentRP === 'sop') renderSOP();
+  }
+}
+
+function saveSOPSnapshot() {
+  if (sopState.data) {
+    const snap = {
+      nifty: sopState.data.nifty?.price || 0,
+      vix: sopState.data.vix?.price || 0,
+      usdinr: sopState.data.macro?.usdinr?.price || 0,
+      crude: sopState.data.macro?.crude?.price || 0,
+      fii_net: sopState.data.fii?.today_net || 0,
+      ts: Date.now()
+    };
+    localStorage.setItem('dw-sop-snapshot', JSON.stringify(snap));
+  }
+}
+window.addEventListener('beforeunload', saveSOPSnapshot);
+
+function computeDeltas() {
+  const current = sopState.data;
+  if (!current) return;
+  
+  let prev = null;
+  if (sopDeltaState.history && sopDeltaState.history.sessions && sopDeltaState.history.sessions.length > 1) {
+     prev = sopDeltaState.history.sessions[1];
+  } else {
+     try {
+       const snap = JSON.parse(localStorage.getItem('dw-sop-snapshot'));
+       if (snap && (Date.now() - snap.ts < 48 * 60 * 60_000)) prev = snap;
+     } catch(e){}
+  }
+  
+  if (!prev) {
+     sopDeltaState.deltas = [];
+     return;
+  }
+  
+  const deltas = [];
+  const addDelta = (key, metric, curr, old, type) => {
+     if (!curr || !old) return;
+     const diff = curr - old;
+     const pct = (diff / old) * 100;
+     deltas.push({ key, metric, curr, old, diff, pct, type });
+  };
+  
+  addDelta('nifty', 'Nifty 50', current.nifty?.price, prev.nifty, 'index');
+  addDelta('vix', 'India VIX', current.vix?.price, prev.vix, 'volatility');
+  
+  const currFii = current.fii?.today_net || 0;
+  const prevFii = prev.fii_net || 0;
+  if (currFii !== 0 || prevFii !== 0) {
+     deltas.push({ key: 'fii', metric: 'FII Flow', curr: currFii, old: prevFii, diff: currFii - prevFii, pct: 0, type: 'flow' });
+  }
+  
+  addDelta('usdinr', 'USD/INR', current.macro?.usdinr?.price, prev.usdinr, 'macro');
+  addDelta('crude', 'Crude Oil', current.macro?.crude?.price, prev.crude, 'macro');
+
+  const significant = [];
+  deltas.forEach(d => {
+    let score = 0;
+    let desc = '';
+    let dir = d.diff > 0 ? 'up' : 'down';
+    
+    if (d.type === 'index') {
+       if (Math.abs(d.pct) > 1.5) { score = 3; desc = `Moved sharply by ${Math.abs(d.pct).toFixed(1)}%`; }
+       else if (Math.abs(d.pct) > 0.7) { score = 2; desc = `Moved by ${Math.abs(d.pct).toFixed(1)}%`; }
+       else if (Math.abs(d.pct) > 0.3) { score = 1; desc = `Slight move of ${Math.abs(d.pct).toFixed(1)}%`; }
+    } else if (d.type === 'volatility') {
+       if (Math.abs(d.pct) > 10) { score = 3; desc = `Spiked ${Math.abs(d.pct).toFixed(1)}%`; }
+       else if (Math.abs(d.pct) > 5) { score = 2; desc = `Changed ${Math.abs(d.pct).toFixed(1)}%`; }
+       else if (Math.abs(d.diff) > 1) { score = 1; desc = `Shifted by ${Math.abs(d.diff).toFixed(1)} points`; }
+    } else if (d.type === 'flow') {
+       if ((d.curr > 0 && d.old < 0) || (d.curr < 0 && d.old > 0)) {
+         score = 3; 
+         desc = `Flipped to net ${d.curr > 0 ? 'buying' : 'selling'}`; 
+         dir = d.curr > 0 ? 'up' : 'down';
+       } else if (Math.abs(d.diff) > 2000) {
+         score = 2; desc = `Significant acceleration`;
+       } else if (Math.abs(d.diff) > 1000) {
+         score = 1; desc = `Change in momentum`;
+       }
+    } else if (d.type === 'macro') {
+       if (Math.abs(d.pct) > 2) { score = 3; desc = `Large move of ${Math.abs(d.pct).toFixed(1)}%`; }
+       else if (Math.abs(d.pct) > 1) { score = 2; desc = `Moved by ${Math.abs(d.pct).toFixed(1)}%`; }
+    }
+    
+    if (score > 0) {
+      significant.push({ ...d, score, desc, dir });
+    }
+  });
+  
+  significant.sort((a, b) => b.score - a.score);
+  sopDeltaState.deltas = significant.slice(0, 3);
+}
+
+async function fetchSOPData() {
+  const brief = document.getElementById('sop-brief');
+  if (brief) brief.innerHTML = '<div class="sop-section signal-neutral"><span class="sop-section-label">LOADING</span><span class="sop-section-text">Building live SOP from market, flow, volatility, macro, and global data...</span></div>';
+  try {
+    const res = await fetch('/api/sop-data');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'SOP feed unavailable');
+    sopState.data = data;
+    sopState.lastFetch = Date.now();
+    computeDeltas();
+    renderSOP();
+    if (!sopDeltaState.history || Date.now() - (sopDeltaState.lastFetch || 0) > 60_000) {
+      sopDeltaState.lastFetch = Date.now();
+      fetchSOPHistory();
+    }
+  } catch (e) {
+    if (brief) brief.innerHTML = `<div class="sop-section signal-headwind"><span class="sop-section-label">ERROR</span><span class="sop-section-text">${e.message}</span></div>`;
+  }
+}
+
+function section(label, text, signal, weight = 1) { return { label, text, signal, weight }; }
+
+function generateSOP(data, profile) {
+  const sections = [];
+  const weights = profile.weights;
+  const globalAvg = (sopNum(data.global?.sp500) + sopNum(data.global?.dow) + sopNum(data.global?.nasdaq)) / 3;
+  let globalText = `Overnight setup is ${data.global?.overnight_bias || 'neutral'}.`;
+  if (weights.global > 0.6) globalText += ` S&P 500 ${sopFmtPct(data.global?.sp500)}, Dow ${sopFmtPct(data.global?.dow)}, Nasdaq ${sopFmtPct(data.global?.nasdaq)} define the opening handover.`;
+  sections.push(section('GLOBAL SETUP', globalText, globalAvg > 0.15 ? 'tailwind' : globalAvg < -0.15 ? 'headwind' : 'neutral', weights.global));
+
+  const fiiNet = sopNum(data.fii?.today_net);
+  const fiiAbs = Math.abs(fiiNet);
+  const fiiText = weights.fii > 0.6
+    ? `FII net flow is ${sopFmtCr(fiiNet)} versus ${sopFmtCr(data.fii?.yesterday_net)} yesterday, with flow ${data.fii?.direction || 'flat'}.`
+    : `FII flow is ${fiiNet >= 0 ? 'positive' : 'negative'}, ${data.fii?.direction || 'flat'}.`;
+  sections.push(section('DOMESTIC FLOWS', fiiText, fiiNet > 250 ? 'tailwind' : fiiNet < -250 ? 'headwind' : 'neutral', weights.fii));
+
+  const vix = sopNum(data.vix?.price);
+  const vixWarning = profile.riskLabel === 'DEFENSIVE' ? vix > 16 : profile.riskLabel === 'AGGRESSIVE' ? vix > 22 : vix > 18;
+  sections.push(section('VOLATILITY', `India VIX is ${vix.toFixed(2)} (${data.vix?.level || 'unknown'}) and ${data.vix?.trend_3d || 'flat'} over three sessions.`, vixWarning ? 'headwind' : vix < 13 ? 'tailwind' : 'neutral', weights.vix));
+
+  if (profile.signalLabel !== 'FUNDAMENTAL') {
+    const rsi = sopNum(data.nifty?.rsi14, 50);
+    const maText = `Nifty is ${sopFmtPct(data.nifty?.distance_20d_ma)} from the 20D average and ${sopFmtPct(data.nifty?.distance_200d_ma)} from the 200D average. RSI-14 is ${rsi.toFixed(1)}.`;
+    const priceSignal = rsi > 70 ? 'headwind' : rsi < 30 ? 'tailwind' : sopNum(data.nifty?.distance_20d_ma) >= 0 ? 'tailwind' : 'headwind';
+    sections.push(section('PRICE STRUCTURE', maText, priceSignal, (weights.maDistance + weights.rsi) / 2));
+  }
+
+  if (profile.signalLabel !== 'TECHNICAL') {
+    const val = data.valuation?.label || 'FAIR';
+    const gsec = data.macro?.gsec?.price ? ` 10Y G-Sec near ${sopNum(data.macro.gsec.price).toFixed(2)}% frames the equity yield trade-off.` : '';
+    sections.push(section('VALUATION CONTEXT', `Nifty valuation proxy is ${val} at ${Math.round(sopNum(data.valuation?.nifty_level)).toLocaleString('en-IN')}.${gsec}`, val === 'ATTRACTIVE' ? 'tailwind' : val === 'STRETCHED' ? 'headwind' : 'neutral', weights.valuation));
+  }
+
+  const crude = sopNum(data.macro?.crude?.price);
+  const usdinr = sopNum(data.macro?.usdinr?.price);
+  const macroStress = crude > 90 || usdinr > 84;
+  sections.push(section('MACRO STRESS', `Crude is ${crude.toFixed(2)} (${sopFmtPct(data.macro?.crude?.percent_change)}), USD/INR is ${usdinr.toFixed(2)}, and DXY is ${sopFmtPct(data.macro?.dxy?.percent_change)}.`, macroStress ? 'headwind' : 'neutral', Math.max(weights.crude, weights.gsec)));
+
+  const visible = sections.filter(s => s.weight >= 0.25);
+  
+  if (sopDeltaState.deltas) {
+     if (sopDeltaState.deltas.length > 0) {
+       let html = `<div id="sop-delta-section">`;
+       sopDeltaState.deltas.forEach(d => {
+         const arrow = d.dir === 'up' ? '▲' : d.dir === 'down' ? '▼' : '—';
+         const icon = d.score === 3 ? '●' : '·';
+         const oldStr = d.type === 'flow' ? sopFmtCr(d.old) : (typeof d.old === 'number' ? d.old.toFixed(2) : d.old);
+         html += `<div class="sop-delta-item"><span class="sop-delta-icon">${icon}</span><span class="sop-delta-metric">${d.metric} ${arrow}</span><span class="sop-delta-desc">${d.desc} (was ${oldStr})</span></div>`;
+       });
+       html += `</div>`;
+       visible.unshift({ label: 'WHAT CHANGED', text: html, signal: 'neutral', weight: 2 });
+     } else {
+       visible.unshift({ label: 'WHAT CHANGED', text: '<div id="sop-delta-section" style="padding-top:4px"><div class="sop-delta-item"><span class="sop-delta-desc">Establishing baseline...</span></div></div>', signal: 'neutral', weight: 2 });
+     }
+  }
+
+  const counts = visible.reduce((acc, s) => { acc[s.signal] = (acc[s.signal] || 0) + 1; return acc; }, {});
+  let overall = counts.tailwind > counts.headwind ? 'tailwind' : counts.headwind > counts.tailwind ? 'headwind' : 'neutral';
+  if (profile.riskLabel === 'DEFENSIVE' && counts.headwind >= counts.tailwind) overall = 'headwind';
+  if (profile.riskLabel === 'AGGRESSIVE' && counts.tailwind >= counts.headwind - 1) overall = 'tailwind';
+  const dominant = overall === 'tailwind' ? 'Tailwinds are stronger than warnings.' : overall === 'headwind' ? 'Warnings dominate the setup.' : 'Signals are mixed and require confirmation.';
+  const implication = overall === 'tailwind'
+    ? (profile.riskLabel === 'AGGRESSIVE' ? 'Look for breakout participation, but keep invalidation tight.' : 'Prefer selective longs over broad exposure.')
+    : overall === 'headwind'
+      ? 'Protect capital first and wait for cleaner confirmation.'
+      : 'Stay balanced and let price confirm direction.';
+  return { sections: visible, synthesis: { text: `${profile.name} setup. ${dominant} ${implication}`, signal: overall } };
+}
+
+function renderSOP() {
+  if (!sopState.profile) sopState.profile = computeProfile(sopState.sliders);
+  if (!sopState.data) return;
+  const out = generateSOP(sopState.data, sopState.profile);
+  const brief = document.getElementById('sop-brief');
+  if (brief) {
+    brief.innerHTML = out.sections.map(s => `<div class="sop-section signal-${s.signal}"><span class="sop-section-label">${s.label}</span><span class="sop-section-text">${s.text}</span></div>`).join('');
+  }
+  const synthesis = document.getElementById('sop-synthesis');
+  if (synthesis) {
+    synthesis.textContent = out.synthesis.text;
+    synthesis.style.color = out.synthesis.signal === 'tailwind' ? 'var(--green)' : out.synthesis.signal === 'headwind' ? 'var(--red)' : 'var(--text)';
+    synthesis.classList.remove('sop-reveal');
+    void synthesis.offsetWidth;
+    synthesis.classList.add('sop-reveal');
+    let fresh = document.getElementById('sop-freshness');
+    if (!fresh) {
+      fresh = document.createElement('div');
+      fresh.id = 'sop-freshness';
+      synthesis.insertAdjacentElement('afterend', fresh);
+    }
+    const ts = Date.parse(sopState.data.ts || '');
+    if (Number.isFinite(ts) && Date.now() - ts > 5 * 60_000) {
+      const time = new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+      fresh.textContent = `Brief is from ${time} IST - refresh for current setup`;
+      fresh.style.display = 'block';
+    } else {
+      fresh.textContent = '';
+      fresh.style.display = 'none';
+    }
+  }
+}
+
 function renderBreadthBar(advances, declines) {
   let bar = document.getElementById('breadth-bar-wrap');
   if (!bar) { bar = document.createElement('div'); bar.id = 'breadth-bar-wrap'; bar.style.cssText = 'padding:8px 10px 10px;border-bottom:1px solid #0d0d18;'; const miniCharts = document.getElementById('mini-macro-charts'); if (miniCharts) miniCharts.parentNode.insertBefore(bar, miniCharts); }
@@ -1492,6 +2155,147 @@ function renderLockin() {
   el.innerHTML = html;
 }
 
+// ── EVENTS CALENDAR ──────────────────────────────────────────
+let eventsState = {
+  data: null,
+  impact: null,
+  filter: 'all',
+  lastFetch: 0
+};
+
+async function fetchEvents() {
+  try {
+    const [dRes, iRes] = await Promise.all([
+      fetch('/api/events').then(r => r.json()),
+      fetch('/api/events/impact').then(r => r.json())
+    ]);
+    eventsState.data = dRes;
+    eventsState.impact = iRes;
+    eventsState.lastFetch = Date.now();
+    renderEventsStrip();
+    if (currentRP === 'events') renderEventsPanel();
+  } catch (e) {
+    console.error('Events fetch error:', e);
+  }
+}
+
+function renderEventsStrip() {
+  const container = document.getElementById('events-strip-items');
+  if (!container) return;
+  if (!eventsState.data || !eventsState.data.next3) {
+    container.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:0 16px;">Loading events...</div>';
+    return;
+  }
+  
+  const iconMap = {
+    rbi: 'RBI', fomc: 'FED', expiry: 'EXP', msci: 'MSCI',
+    budget: 'BUDG', earnings_season: 'EARN', holiday: 'HOL'
+  };
+
+  let html = '';
+  eventsState.data.next3.forEach(ev => {
+    let cdHtml = '';
+    if (ev.urgency === 'today') cdHtml = 'TODAY';
+    else if (ev.urgency === 'imminent') cdHtml = ev.daysUntil === 1 ? 'TOMORROW' : `${ev.hoursUntil || 0} HRS`;
+    else cdHtml = `${ev.daysUntil} DAYS`;
+    
+    html += `
+      <div class="event-strip-item urgency-${ev.urgency}">
+        <span class="esi-category">${iconMap[ev.category] || 'EVT'}</span>
+        <span class="esi-title" title="${ev.title}">${ev.title}</span>
+        <span class="esi-countdown urgency-${ev.urgency}">${cdHtml}</span>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+}
+
+function setEventsFilter(cat) {
+  eventsState.filter = cat;
+  renderEventsPanel();
+}
+
+function renderEventsPanel() {
+  const banner = document.getElementById('events-impact-banner');
+  const filterRow = document.getElementById('events-filter-row');
+  const list = document.getElementById('events-list');
+  if (!banner || !filterRow || !list || !eventsState.data || !eventsState.impact) return;
+
+  // Banner
+  const imp = eventsState.impact;
+  let bg = 'var(--bg1)';
+  if (imp.eventDensity === 'critical week') bg = 'rgba(255,51,51,0.1)';
+  else if (imp.eventDensity === 'busy') bg = 'rgba(230,184,74,0.1)';
+  else if (imp.eventDensity === 'normal') bg = 'rgba(255,255,255,0.03)';
+  
+  banner.style.background = bg;
+  banner.innerHTML = `<strong>MARKET RADAR:</strong> ${imp.headline}`;
+
+  // Filters
+  const filters = [
+    { id: 'all', label: 'ALL' },
+    { id: 'rbi', label: 'RBI' },
+    { id: 'fomc', label: 'FED' },
+    { id: 'expiry', label: 'EXPIRY' },
+    { id: 'msci', label: 'MSCI' },
+    { id: 'budget', label: 'BUDGET' },
+    { id: 'earnings_season', label: 'EARNINGS' },
+    { id: 'holiday', label: 'HOLIDAYS' }
+  ];
+  
+  filterRow.innerHTML = filters.map(f => 
+    `<button class="event-filter-chip ${eventsState.filter === f.id ? 'active' : ''}" onclick="setEventsFilter('${f.id}')">${f.label}</button>`
+  ).join('');
+
+  // List
+  let events = eventsState.data.upcoming;
+  if (eventsState.filter !== 'all') {
+    events = events.filter(e => e.category === eventsState.filter);
+  }
+  
+  if (events.length === 0) {
+    list.innerHTML = '<div style="color:var(--dim);font-size:12px;padding:20px;text-align:center;">No upcoming events in this category.</div>';
+    return;
+  }
+  
+  const iconMap = { rbi: 'RBI', fomc: 'FED', expiry: 'EXPIRY', msci: 'MSCI', budget: 'BUDGET', earnings_season: 'EARNINGS', holiday: 'HOLIDAY' };
+  
+  let html = '';
+  events.forEach(ev => {
+    let cdHtml = '';
+    if (ev.urgency === 'today') cdHtml = 'TODAY';
+    else if (ev.urgency === 'imminent') cdHtml = ev.daysUntil === 1 ? 'TOMORROW' : `${ev.hoursUntil || 0} HRS`;
+    else cdHtml = `IN ${ev.daysUntil} DAYS`;
+    
+    let dtObj = new Date(`${ev.date}T${ev.time || '00:00'}:00+05:30`);
+    let dtStr = dtObj.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (ev.time) dtStr += ` · ${ev.time} IST`;
+    
+    html += `
+      <div class="event-card urgency-${ev.urgency} impact-${ev.impact}">
+        <div class="ec-header">
+          <span class="ec-cat">${iconMap[ev.category] || ev.category}</span>
+          <span class="ec-impact ${ev.impact}">${ev.impact} IMPACT</span>
+        </div>
+        <div class="ec-title">${ev.title}</div>
+        <div class="ec-date">${dtStr}</div>
+        <div class="ec-countdown urgency-${ev.urgency}">${cdHtml}</div>
+        <div class="ec-note">${ev.note}</div>
+      </div>
+    `;
+  });
+  list.innerHTML = html;
+}
+
+function startEventCountdownTick() {
+  setInterval(() => {
+    if (!eventsState.data) return;
+    renderEventsStrip();
+    if (currentRP === 'events') renderEventsPanel();
+  }, 60000);
+}
+
 // ── EARNINGS CALENDAR ──
 const EARNINGS = [
   { date: '07 Apr', company: 'TCS', sym: 'TCS', est: 'Rev $7.1B', period: 'Q4 FY26', sector: 'IT' },
@@ -1539,99 +2343,24 @@ function processFiiDii(data) {
   } catch (e) { console.warn('FII/DII processing failed:', e.message); }
 }
 
-// ── BRIDGE INTEGRATION ──
-const WORLDMONITOR_URL = /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
-  ? 'http://127.0.0.1:3200/?variant=finance&preset=dalal'
-  : 'https://finance.worldmonitor.app/?variant=finance&preset=dalal';
-
-const BRIDGE_PRESETS = {
-  macro:  { route: 'macro',  title: 'Macro pressure, breadth, and risk flow.',     desc: 'Rates, dollar, and liquidity are driving the setup.', mode: 'Macro Watch',   themeClass: 'bridge-macro' },
-  energy: { route: 'energy', title: 'Energy shock is the first domino.',            desc: 'Track crude, shipping, and inflation pressure.',       mode: 'Energy Shock',  themeClass: 'bridge-energy' },
-  china:  { route: 'china',  title: 'Asia and metals need a different lens.',       desc: 'China demand and Asia risk moving metals and exporters.',mode: 'China Pulse',  themeClass: 'bridge-china' },
-};
-let bridgeGraphSeries = []; let bridgeGraphMode = 'macro'; let bridgeGraphTimer = null;
-
-function getBridgeStory() { if (Array.isArray(currentStories) && currentStories.length) { if (activeIdx >= 0 && currentStories[activeIdx]) return currentStories[activeIdx]; return currentStories[0]; } return null; }
-function getWorldMonitorStandaloneUrl() { return WORLDMONITOR_URL; }
-window.getWorldMonitorStandaloneUrl = getWorldMonitorStandaloneUrl;
-function openWorldMonitorStandalone() { window.open(WORLDMONITOR_URL, '_blank', 'noopener'); }
-window.openWorldMonitorStandalone = openWorldMonitorStandalone;
-function showWorldMonitorFinance() { openWorldMonitorStandalone(); }
-window.showWorldMonitorFinance = showWorldMonitorFinance;
-function updateFinanceBridgeCards(activeRoute) { document.querySelectorAll('[data-bridge-route]').forEach(card => { card.classList.toggle('is-active', card.dataset.bridgeRoute === activeRoute); }); }
-
-function drawFinanceBridgeGraph() {
-  const canvas = document.getElementById('wm-bridge-graph'); if (!canvas) return;
-  const parent = canvas.parentElement; const width = Math.max(240, parent.clientWidth - 28); const height = 84; const dpr = window.devicePixelRatio || 1;
-  canvas.width = width * dpr; canvas.height = height * dpr; canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
-  const ctx = canvas.getContext('2d'); if (!ctx) return; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height);
-  if (!bridgeGraphSeries.length) { bridgeGraphSeries = Array.from({ length: 42 }, (_, i) => 100 + Math.sin(i / 5) * 4 + (Math.random() - .5) * 3); }
-  const min = Math.min(...bridgeGraphSeries) - 4; const max = Math.max(...bridgeGraphSeries) + 4; const range = Math.max(8, max - min);
-  const lineColor = bridgeGraphMode === 'energy' ? '#ff8a38' : bridgeGraphMode === 'china' ? '#5ec9ff' : '#8e84ff';
-  const fillColor = bridgeGraphMode === 'energy' ? '255,102,0' : bridgeGraphMode === 'china' ? '105,200,255' : '142,132,255';
-  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1;
-  for (let i = 1; i <= 3; i++) { const y = (height / 4) * i; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
-  ctx.beginPath(); bridgeGraphSeries.forEach((value, index) => { const x = (index / (bridgeGraphSeries.length - 1)) * width; const y = height - ((value - min) / range) * (height - 12) - 6; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-  const gradient = ctx.createLinearGradient(0, 0, 0, height); gradient.addColorStop(0, `rgba(${fillColor},0.28)`); gradient.addColorStop(1, `rgba(${fillColor},0)`);
-  ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
-  ctx.beginPath(); bridgeGraphSeries.forEach((value, index) => { const x = (index / (bridgeGraphSeries.length - 1)) * width; const y = height - ((value - min) / range) * (height - 12) - 6; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.shadowBlur = 0; ctx.stroke();
-  const lastY = height - ((bridgeGraphSeries[bridgeGraphSeries.length - 1] - min) / range) * (height - 12) - 6;
-  ctx.beginPath(); ctx.arc(width, lastY, 3, 0, Math.PI * 2); ctx.fillStyle = '#fff3da'; ctx.fill();
-}
-
-function tickFinanceBridgeGraph() {
-  const preset = inferFinanceBridgePreset(); bridgeGraphMode = preset.route;
-  const last = bridgeGraphSeries.length ? bridgeGraphSeries[bridgeGraphSeries.length - 1] : 100;
-  const next = last + 0.1 + (Math.random() - .5) * 2;
-  bridgeGraphSeries.push(next); if (bridgeGraphSeries.length > 42) bridgeGraphSeries.shift(); drawFinanceBridgeGraph();
-}
-
-function initFinanceBridgeGraph() { if (bridgeGraphTimer) return; drawFinanceBridgeGraph(); bridgeGraphTimer = setInterval(tickFinanceBridgeGraph, 1200); window.addEventListener('resize', drawFinanceBridgeGraph); }
-
 function animateCollection(selector, options = {}) {
   const nodes = document.querySelectorAll(selector);
   nodes.forEach(n => { n.style.opacity = '1'; n.style.transform = 'none'; });
 }
 
-function inferFinanceBridgePreset(routeOverride) {
-  const forcedRoute = routeOverride || manualPulseRoute; if (forcedRoute && BRIDGE_PRESETS[forcedRoute]) return BRIDGE_PRESETS[forcedRoute];
-  const story = getBridgeStory(); const bag = [currentCat, currentRP, currentTicker, story?.headline || ''].join(' ').toLowerCase();
-  if (/crude|oil|hormuz|iran|israel|shipping|strait|energy/.test(bag)) return BRIDGE_PRESETS.energy;
-  if (/china|metal|steel|copper|asia|export|hang seng|nikkei/.test(bag)) return BRIDGE_PRESETS.china;
-  return BRIDGE_PRESETS.macro;
-}
-
-function setDalalPulseMode(route) { manualPulseRoute = BRIDGE_PRESETS[route] ? route : null; refreshFinanceBridge(); }
-window.setDalalPulseMode = setDalalPulseMode;
-
-function refreshFinanceBridge() {
-  const root = document.getElementById('wm-bridge'); if (!root) return;
-  const preset = inferFinanceBridgePreset();
-  root.classList.remove('bridge-macro', 'bridge-energy', 'bridge-china'); root.classList.add(preset.themeClass);
-  const titleEl = document.getElementById('wm-bridge-title'); const descEl = document.getElementById('wm-bridge-desc');
-  if (titleEl) titleEl.textContent = preset.title;
-  if (descEl) { const story = getBridgeStory(); const extra = story?.headline ? ` Active: ${story.headline.slice(0, 100)}…` : ''; descEl.textContent = preset.desc + extra; }
-  updateFinanceBridgeCards(preset.route); bridgeGraphMode = preset.route; drawFinanceBridgeGraph();
-}
-window.refreshFinanceBridge = refreshFinanceBridge;
-
-// ── FOCUS MODE ──
-let dalalFocusMode = false; // FIX: always start false, never persist
+// FOCUS MODE
+let dalalFocusMode = false;
 
 function applyDalalFocusMode() {
   document.body.classList.toggle('dalal-focus-mode', dalalFocusMode);
   document.getElementById('bb')?.classList.toggle('dalal-focus-mode', dalalFocusMode);
   const btn = document.getElementById('dw-focus-toggle');
   if (btn) { btn.textContent = dalalFocusMode ? 'EXIT FOCUS' : 'TERMINAL FOCUS'; btn.classList.toggle('is-active', dalalFocusMode); }
-  const escHint = document.getElementById('focus-esc-hint');
-  if (escHint) { escHint.classList.toggle('is-visible', dalalFocusMode); }
 }
 
 function toggleDalalFocusMode(force) {
   dalalFocusMode = typeof force === 'boolean' ? force : !dalalFocusMode;
   applyDalalFocusMode();
-  if (!dalalFocusMode && !bridgeGraphTimer) { initFinanceBridgeGraph(); refreshFinanceBridge(); }
 }
 window.toggleDalalFocusMode = toggleDalalFocusMode;
 
@@ -1642,7 +2371,9 @@ function restoreLayout() {
     const saved = JSON.parse(localStorage.getItem('dw-layout') || '{}');
     const cat = saved.cat || 'market';
     let rp = saved.rp || 'detail';
-    if (rp === 'charts' || rp === 'wm' || rp === 'earnings') rp = 'detail'; // safe fallback
+    if (rp === 'charts' || rp === 'earnings') rp = 'detail'; // safe fallback
+    const validSavedRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare']);
+    if (!validSavedRPs.has(rp)) rp = 'detail';
     currentCat = cat;
     currentRP = rp;
     if (saved.ticker) currentTicker = saved.ticker;
@@ -1654,7 +2385,66 @@ function restoreLayout() {
 }
 
 // ── KEYBOARD SHORTCUTS ──
-const KEY_HELP = [['R','Refresh news'],['M','Market'],['B','Banks'],['S','Sectors'],['A','Macro'],['T','Stocks'],['G','Global'],['1','Story'],['2','Advice'],['3','Global markets'],['4','Heatmap'],['5','MF/ETF'],['6','Commodities'],['7','Lock-in'],['8','Sentiment'],['?','Help']];
+function initTabScroll() {
+  const tabs = document.getElementById('rp-tabs');
+  const arrow = document.getElementById('rp-tabs-arrow');
+  const container = document.getElementById('rp-tabs-container');
+  if (!tabs || !arrow || !container) return;
+
+  updateArrowVisibility = function () {
+    const hasOverflow = tabs.scrollWidth > tabs.clientWidth;
+    const atEnd = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 4;
+    const atStart = tabs.scrollLeft > 4;
+
+    if (hasOverflow && !atEnd) {
+      arrow.classList.add('visible');
+      arrow.setAttribute('aria-label', 'Scroll tabs right');
+    } else {
+      arrow.classList.remove('visible');
+      arrow.setAttribute('aria-label', 'Scroll tabs to start');
+    }
+
+    if (atStart) container.classList.add('scrolled-left');
+    else container.classList.remove('scrolled-left');
+  };
+
+  tabs.addEventListener('scroll', updateArrowVisibility);
+  window.addEventListener('resize', updateArrowVisibility);
+  updateArrowVisibility();
+}
+
+function scrollTabsRight() {
+  const tabs = document.getElementById('rp-tabs');
+  if (!tabs) return;
+
+  const tabEls = tabs.querySelectorAll('.rp-tab');
+  const tabsRight = tabs.getBoundingClientRect().right;
+
+  let targetTab = null;
+  for (const tab of tabEls) {
+    const rect = tab.getBoundingClientRect();
+    if (rect.right > tabsRight - 4) {
+      targetTab = tab;
+      break;
+    }
+  }
+
+  if (targetTab) {
+    tabs.scrollTo({
+      left: targetTab.offsetLeft - 8,
+      behavior: 'smooth'
+    });
+  } else {
+    tabs.scrollTo({ left: 0, behavior: 'smooth' });
+  }
+
+  setTimeout(() => {
+    if (updateArrowVisibility) updateArrowVisibility();
+  }, 350);
+}
+window.scrollTabsRight = scrollTabsRight;
+
+const KEY_HELP = [['R','Refresh news'],['M','Market'],['B','Banks'],['S','Sectors'],['A','Macro'],['T','Stocks'],['G','Global'],['C','Compare views'],['P','SOP brief'],['1','Story'],['2','Advice'],['3','Global markets'],['4','Heatmap'],['5','MF/ETF'],['6','Commodities'],['7','Lock-in'],['8','Sentiment'],['?','Help']];
 let helpVisible = false;
 function toggleHelp() {
   helpVisible = !helpVisible; let el = document.getElementById('kb-help');
@@ -1677,6 +2467,8 @@ document.addEventListener('keydown', e => {
   if (inInput) return;
   const catMap = { m: 'market', b: 'banks', s: 'sectors', a: 'macro', t: 'stocks', g: 'global' };
   if (catMap[e.key.toLowerCase()] && !e.ctrlKey && !e.metaKey) { loadCategory(catMap[e.key.toLowerCase()]); return; }
+  if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) { switchRP('compare'); return; }
+  if (e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey) { switchRP('sop'); return; }
   if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) { refreshNews(); return; }
   const rpMap = { '1': 'detail', '2': 'advice', '3': 'global', '4': 'heatmap', '5': 'mf', '6': 'commodities', '7': 'lockin', '8': 'feargreed' };
   if (rpMap[e.key]) { switchRP(rpMap[e.key]); return; }
@@ -1695,12 +2487,10 @@ function applyBridgeLaunchState() {
   const params = new URLSearchParams(window.location.search); if (!params.toString()) return;
   const nextCat = (params.get('cat') || '').trim().toLowerCase();
   const nextRP = (params.get('rp') || '').trim().toLowerCase();
-  const nextPulse = (params.get('pulse') || '').trim().toLowerCase();
   const validCats = new Set(['market', 'banks', 'sectors', 'macro', 'stocks', 'global']);
-  const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'earnings']);
+  const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare']);
   if (validCats.has(nextCat)) currentCat = nextCat;
   if (validRPs.has(nextRP)) currentRP = nextRP;
-  if (BRIDGE_PRESETS[nextPulse]) manualPulseRoute = nextPulse;
   if (params.toString()) { window.history.replaceState({}, '', window.location.pathname); }
 }
 
@@ -1736,7 +2526,6 @@ async function fetchIndicesFastData() {
     renderApp();
     applyDashboardHealthLabel(dashStore.quotes || {});
     fetchGlobal();
-    if (!dalalFocusMode) refreshFinanceBridge();
   } catch (e) {
     if (e.name === 'AbortError') return;
     console.error('Fast indices error:', e.message);
@@ -1767,7 +2556,6 @@ async function fetchDashboardSlowData() {
     processFiiDii(slow?.fiiDii || null);
     processMiniVix({ vix: slow?.vix?.series, gsec: slow?.macro?.gsecDaily, spot: { vix: slow?.vix?.spot?.price, gsec: slow?.macro?.gsec?.price }, meta: { vix: slow?.vix?.status, gsec: { tag: 'DELAYED 15M', source: 'Yahoo Finance India 10Y' } } });
     renderApp();
-    if (!dalalFocusMode) refreshFinanceBridge();
   } catch (e) {
     if (e.name === 'AbortError') return;
     console.error('Slow dashboard error:', e.message);
@@ -1779,12 +2567,51 @@ async function fetchDashboardSlowData() {
 
 function fetchDashboardData() { return fetchIndicesFastData(); }
 
+async function fetchMacroContext() {
+  try {
+    const res = await fetch('/api/macro-context');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Macro context unavailable');
+    macroContext = data;
+    applyMacroContextBadges();
+  } catch (e) {
+    console.warn('Macro context error:', e.message);
+  }
+}
+
 function manualRefresh() {
   refreshCountdown = 30;
   const el = document.getElementById('sb-refresh');
   if (el) { el.innerHTML = '<span style="display:inline-block;margin-right:4px">↻</span>REFRESHING...'; el.style.color = '#ff6600'; }
   fetchIndicesFastData();
   scheduleDashboardSlowLoad(200);
+  fetchMacroContext();
+}
+
+function startFastRefreshInterval() {
+  if (fastRefreshTimer) clearInterval(fastRefreshTimer);
+  if (countdownTimer) clearInterval(countdownTimer);
+  fastRefreshTimer = setInterval(() => {
+    refreshCountdown = 30;
+    fetchDashboardData();
+  }, 30000);
+  countdownTimer = setInterval(() => {
+    refreshCountdown = Math.max(0, refreshCountdown - 1);
+    const el = document.getElementById('sb-refresh');
+    if (el) {
+      el.innerHTML = `<span style="display:inline-block;margin-right:4px">â†»</span>REFRESH IN ${refreshCountdown}s`;
+      el.style.color = refreshCountdown <= 5 ? '#ff9900' : '#444';
+    }
+  }, 1000);
+}
+
+function startSlowRefreshInterval() {
+  if (slowRefreshTimer) clearInterval(slowRefreshTimer);
+  slowRefreshTimer = setInterval(() => {
+    fetchDashboardSlowData();
+    fetchMacroContext();
+    if (currentRP === 'sop') fetchSOPData();
+  }, 60000);
 }
 
 // ── BOOT SEQUENCE — FIXED ──
@@ -1800,6 +2627,7 @@ async function init() {
 
     // Slow data non-blocking
     fetchDashboardSlowData();
+    fetchMacroContext();
 
     // FIX 2: Set flag before loading category so news WILL fetch
     isStartupBoot = false;
@@ -1808,36 +2636,42 @@ async function init() {
     restoreLayout();
     applyBridgeLaunchState();
     applyDalalFocusMode();
+    restoreSopSliders();
+    initSopControls();
+    initTabScroll();
 
     // Show initial panel
-    const savedLayout = JSON.parse(localStorage.getItem('dw-layout') || '{}');
-    const startRP = savedLayout.rp || 'detail';
-    switchRP(['charts','wm','earnings'].includes(startRP) ? 'detail' : startRP, { fetchAdviceOnOpen: false });
+    const startRP = currentRP || 'detail';
+    switchRP(['charts','earnings'].includes(startRP) ? 'detail' : startRP, { fetchAdviceOnOpen: false });
 
     // FIX 3: Explicitly load news — this is the primary fix for blank news panel
     loadCategory(currentCat);
-
-    if (!dalalFocusMode) {
-      initFinanceBridgeGraph();
-      refreshFinanceBridge();
-    }
+    fetchEvents();
+    startEventCountdownTick();
+    setInterval(fetchEvents, 300000);
+    startFastRefreshInterval();
+    startSlowRefreshInterval();
 
   } catch (e) {
     console.error('Boot error:', e);
     isStartupBoot = false;
     loadCategory('market');
+    startFastRefreshInterval();
+    startSlowRefreshInterval();
   }
 }
 
 // Initial render before data arrives
+restoreSopSliders();
 setHeadlinesEmptyState('Loading market news...', 'Connecting to live feeds.');
 renderApp();
 renderHeadlines(true);
-renderEarnings();
 
 // Start boot
 init();
 
+// Legacy refresh timers moved into init().
+/*
 // Refresh countdown timer
 setInterval(() => {
   refreshCountdown--;
@@ -1852,4 +2686,8 @@ setInterval(() => {
 }, 1000);
 
 // Slow data refresh every 60s
-setInterval(() => { fetchDashboardSlowData(); }, 60000);
+setInterval(() => {
+  fetchDashboardSlowData();
+  if (sopState.data || currentRP === 'sop') fetchSOPData();
+}, 60000);
+*/

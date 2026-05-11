@@ -4,7 +4,7 @@
   "functions": {
     "server.js": {
       "maxDuration": 60,
-      "includeFiles": "{dalal-worldmonitor-bridge.html,bridge-app.js,bridge-styles.css,switcher-widget.html,dalal-wire-node/public/**}"
+      "includeFiles": "{dalal-wire-node/public/**}"
     }
   },
   "rewrites": [

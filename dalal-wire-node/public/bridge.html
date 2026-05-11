@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dalal Wire - Bridge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/bridge-styles.css">
+</head>
+<body>
+
+  <!-- STATUS STRIP -->
+  <div id="status-strip">
+    <div class="brand">DALAL WIRE <span>BRIDGE</span></div>
+    <div class="status-right">
+      <span class="dot-live"></span>
+      <span id="bridge-clock">--:--:-- IST</span>
+    </div>
+  </div>
+
+  <!-- NEW SIGNAL BAR -->
+  <div id="signal-bar">
+    <div id="signal-score-wrap">
+      <div id="signal-score">--</div>
+      <div id="signal-score-label">SIGNAL</div>
+    </div>
+    <div id="signal-content">
+      <div id="signal-label">LOADING</div>
+      <div id="signal-reason">
+        Fetching market data...
+      </div>
+    </div>
+    <div id="signal-factors">
+      <!-- top 3 factors -->
+    </div>
+    <div id="signal-event-pill">
+      <!-- nearest event if within 3 days -->
+    </div>
+    <a id="signal-cta" href="/terminal" onclick="navigate(event, '/terminal')">
+      OPEN TERMINAL →
+    </a>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main-grid">
+    <div class="card">
+      <h2>DALAL WIRE</h2>
+      <p>The main operating terminal for Indian equity markets.</p>
+      <a href="/terminal" class="launch-btn" onclick="navigate(event, '/terminal')">LAUNCH TERMINAL</a>
+    </div>
+    <div class="card">
+      <h2>WORLDMONITOR FINANCE</h2>
+      <p>Intelligence layer for macro, commodities, and cross-market context.</p>
+      <a href="#" class="launch-btn disabled">UNAVAILABLE</a>
+    </div>
+  </div>
+
+  <!-- NAVIGATION SWITCHER WIDGET -->
+  <div id="nav-widget">
+    <div id="nav-pill" onclick="document.getElementById('nav-panel').classList.toggle('open')">
+      <span></span>APP SWITCHER
+    </div>
+    <div id="nav-panel">
+      <a href="/" class="active">⬡ BRIDGE <span>● HERE</span></a>
+      <a href="/terminal">◈ DALAL WIRE</a>
+    </div>
+  </div>
+
+  <script src="/bridge-app.js"></script>
+</body>
+</html>
