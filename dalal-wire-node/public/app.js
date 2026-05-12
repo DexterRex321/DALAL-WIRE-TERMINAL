@@ -41,6 +41,22 @@ window.fetch = async function (...args) {
   return result;
 };
 
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out. Try refresh.');
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Start token rotation loop
 setInterval(async () => {
   dToken = null;
@@ -334,6 +350,8 @@ const STOCK_STATIC_DATA = Object.values(INDEX_VIEW_CONFIG).flatMap(index => inde
   return acc;
 }, {});
 
+let macroContext = null;
+
 sanitizeSidebarConfig();
 renderSidebar();
 saveConfig();
@@ -379,7 +397,6 @@ let compareState = { a: 'FII', b: 'NIFTY', data: null, fetching: false };
 let compareInitialized = false;
 let sopState = { sliders: { horizon: 50, signal: 50, risk: 50 }, data: null, lastFetch: 0, profile: null };
 let sopDeltaState = { history: null, snapshot: null, deltas: null, lastFetch: 0 };
-let macroContext = null;
 let fastRefreshTimer = null;
 let slowRefreshTimer = null;
 let countdownTimer = null;
@@ -768,7 +785,7 @@ function switchRP(tab, options = {}) {
   }, 400);
 
   // Update visible right-panel module.
-  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-sop', 'rp-compare'];
+  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-sop', 'rp-compare', 'rp-events'];
   panels.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -785,7 +802,8 @@ function switchRP(tab, options = {}) {
     lockin: 'rp-lockin',
     feargreed: 'rp-feargreed',
     sop: 'rp-sop',
-    compare: 'rp-compare'
+    compare: 'rp-compare',
+    events: 'rp-events'
   };
 
   const activePanel = document.getElementById(panelMap[tab]);
@@ -1345,9 +1363,7 @@ async function runCompare() {
   if (interp) { interp.textContent = 'Reading cross-market relationship...'; interp.style.borderLeftColor = 'var(--gold, #ffbf3d)'; interp.style.background = 'rgba(255,191,61,.08)'; }
   try {
     const url = `/api/compare?a=${encodeURIComponent(compareState.a)}&b=${encodeURIComponent(compareState.b)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Compare feed unavailable');
+    const data = await fetchJsonWithTimeout(url, {}, 15000);
     compareState.data = data;
     localStorage.setItem('dw-compare-pair', JSON.stringify({ a: compareState.a, b: compareState.b }));
     initCompareQuickPairs();
@@ -1545,8 +1561,7 @@ function initSopControls() {
 
 async function fetchSOPHistory() {
   try {
-    const res = await fetch('/api/sop-history');
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout('/api/sop-history', {}, 15000);
     sopDeltaState.history = data;
     computeDeltas();
     if (currentRP === 'sop') renderSOP();
@@ -1653,9 +1668,7 @@ async function fetchSOPData() {
   const brief = document.getElementById('sop-brief');
   if (brief) brief.innerHTML = '<div class="sop-section signal-neutral"><span class="sop-section-label">LOADING</span><span class="sop-section-text">Building live SOP from market, flow, volatility, macro, and global data...</span></div>';
   try {
-    const res = await fetch('/api/sop-data');
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'SOP feed unavailable');
+    const data = await fetchJsonWithTimeout('/api/sop-data', {}, 18000);
     sopState.data = data;
     sopState.lastFetch = Date.now();
     computeDeltas();
@@ -2372,7 +2385,7 @@ function restoreLayout() {
     const cat = saved.cat || 'market';
     let rp = saved.rp || 'detail';
     if (rp === 'charts' || rp === 'earnings') rp = 'detail'; // safe fallback
-    const validSavedRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare']);
+    const validSavedRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare', 'events']);
     if (!validSavedRPs.has(rp)) rp = 'detail';
     currentCat = cat;
     currentRP = rp;
@@ -2488,7 +2501,7 @@ function applyBridgeLaunchState() {
   const nextCat = (params.get('cat') || '').trim().toLowerCase();
   const nextRP = (params.get('rp') || '').trim().toLowerCase();
   const validCats = new Set(['market', 'banks', 'sectors', 'macro', 'stocks', 'global']);
-  const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare']);
+  const validRPs = new Set(['detail', 'advice', 'global', 'heatmap', 'mf', 'commodities', 'lockin', 'feargreed', 'sop', 'compare', 'events']);
   if (validCats.has(nextCat)) currentCat = nextCat;
   if (validRPs.has(nextRP)) currentRP = nextRP;
   if (params.toString()) { window.history.replaceState({}, '', window.location.pathname); }
@@ -2516,6 +2529,7 @@ async function fetchIndicesFastData() {
   if (indicesFastFetching) return; indicesFastFetching = true;
   if (indicesFastController) { try { indicesFastController.abort(); } catch {} }
   const controller = new AbortController(); indicesFastController = controller;
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const res = await fetch('/api/indices-fast', { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2531,6 +2545,7 @@ async function fetchIndicesFastData() {
     console.error('Fast indices error:', e.message);
     const lu = document.getElementById('last-updated'); if (lu) { lu.textContent = 'CONNECTION ERROR'; lu.style.color = '#ff4444'; }
   } finally {
+    clearTimeout(timeout);
     if (indicesFastController === controller) indicesFastController = null;
     indicesFastFetching = false;
     refreshCountdown = 30;
@@ -2542,6 +2557,7 @@ async function fetchDashboardSlowData() {
   if (dashboardSlowFetching) return; dashboardSlowFetching = true;
   if (dashboardSlowController) { try { dashboardSlowController.abort(); } catch {} }
   const controller = new AbortController(); dashboardSlowController = controller;
+  const timeout = setTimeout(() => controller.abort(), 18000);
   try {
     const res = await fetch('/api/dashboard-slow', { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2560,6 +2576,7 @@ async function fetchDashboardSlowData() {
     if (e.name === 'AbortError') return;
     console.error('Slow dashboard error:', e.message);
   } finally {
+    clearTimeout(timeout);
     if (dashboardSlowController === controller) dashboardSlowController = null;
     dashboardSlowFetching = false;
   }
@@ -2622,16 +2639,6 @@ async function init() {
   // Native scrolling for internal panels is used instead of Lenis to avoid event hijacking.
 
   try {
-    // Fast indices first (shows data immediately)
-    await fetchIndicesFastData();
-
-    // Slow data non-blocking
-    fetchDashboardSlowData();
-    fetchMacroContext();
-
-    // FIX 2: Set flag before loading category so news WILL fetch
-    isStartupBoot = false;
-
     // Restore layout state
     restoreLayout();
     applyBridgeLaunchState();
@@ -2644,11 +2651,16 @@ async function init() {
     const startRP = currentRP || 'detail';
     switchRP(['charts','earnings'].includes(startRP) ? 'detail' : startRP, { fetchAdviceOnOpen: false });
 
+    isStartupBoot = false;
+
     // FIX 3: Explicitly load news — this is the primary fix for blank news panel
     loadCategory(currentCat);
     fetchEvents();
     startEventCountdownTick();
     setInterval(fetchEvents, 300000);
+    fetchIndicesFastData();
+    scheduleDashboardSlowLoad(200);
+    fetchMacroContext();
     startFastRefreshInterval();
     startSlowRefreshInterval();
 
