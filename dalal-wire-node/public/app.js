@@ -1379,48 +1379,277 @@ window.runCompare = runCompare;
 function drawCompareChart(data) {
   const chart = document.getElementById('compare-chart');
   if (!chart) return;
-  chart.innerHTML = `<div class="compare-chart-head"><span class="compare-axis-label">${data.a.label}</span><span class="compare-axis-label">${data.b.label}</span></div><canvas id="compare-canvas" class="compare-dual-canvas" height="160"></canvas>`;
+
+  // Inject tooltip element once
+  let tooltip = document.getElementById('compare-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'compare-tooltip';
+    tooltip.innerHTML = `
+      <div class="ctt-date" id="ctt-date"></div>
+      <div class="ctt-row"><span class="ctt-label" id="ctt-label-a"></span><span class="ctt-val-a" id="ctt-val-a"></span></div>
+      <div class="ctt-row"><span class="ctt-label" id="ctt-label-b"></span><span class="ctt-val-b" id="ctt-val-b"></span></div>
+      <div class="ctt-rel" id="ctt-rel"></div>`;
+    chart.appendChild(tooltip);
+  }
+
+  chart.innerHTML = `
+    <div class="compare-chart-head">
+      <span class="compare-axis-label" style="color:#ff6600">● ${data.a.label}</span>
+      <span style="color:var(--dim);font-size:9px">${data.sessions} SESSIONS</span>
+      <span class="compare-axis-label" style="color:#4a9eff">● ${data.b.label}</span>
+    </div>
+    <canvas id="compare-canvas" class="compare-dual-canvas" height="160"></canvas>
+    <div id="compare-tooltip">
+      <div class="ctt-date" id="ctt-date"></div>
+      <div class="ctt-row"><span class="ctt-label" id="ctt-label-a"></span><span class="ctt-val-a" id="ctt-val-a"></span></div>
+      <div class="ctt-row"><span class="ctt-label" id="ctt-label-b"></span><span class="ctt-val-b" id="ctt-val-b"></span></div>
+      <div class="ctt-rel" id="ctt-rel"></div>
+    </div>`;
+
   const canvas = document.getElementById('compare-canvas');
-  const rows = data.aligned || [];
+  const rows   = data.aligned || [];
   if (!canvas || !rows.length) return;
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(300, chart.clientWidth - 24);
+
+  const dpr    = Math.min(window.devicePixelRatio || 1, 2);
+  const width  = Math.max(300, chart.clientWidth - 24);
   const height = 160;
-  canvas.width = width * dpr; canvas.height = height * dpr;
-  canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
-  const ctx = canvas.getContext('2d'); if (!ctx) return;
+
+  canvas.width  = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width  = width + 'px';
+  canvas.style.height = height + 'px';
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  const pad = { l: 10, r: 78, t: 16, b: 24 };
-  const plotW = width - pad.l - pad.r;
+
+  // Layout
+  const pad  = { l: 10, r: 10, t: 10, b: 24 };
+  const plotW = width  - pad.l - pad.r;
   const plotH = height - pad.t - pad.b;
+
+  // Normalise series to 0-100 within window for drawing
   const normalize = (values) => {
-    const min = Math.min(...values), max = Math.max(...values), range = (max - min) || 1;
-    return values.map(value => ((value - min) / range) * 100);
+    const nums = values.map(Number).filter(Number.isFinite);
+    const min  = Math.min(...nums);
+    const max  = Math.max(...nums);
+    const rng  = max - min || 1;
+    return values.map(v => ((Number(v) - min) / rng) * 100);
   };
-  const buildPts = (values) => normalize(values).map((value, i) => ({ x: pad.l + (i / Math.max(values.length - 1, 1)) * plotW, y: pad.t + plotH - (value / 100) * plotH }));
-  const aPts = buildPts(rows.map(row => Number(row.a)));
-  const bPts = buildPts(rows.map(row => Number(row.b)));
-  const drawLine = (pts, color) => {
+
+  const aNorm = normalize(rows.map(r => r.a));
+  const bNorm = normalize(rows.map(r => r.b));
+
+  const buildPts = (norm) =>
+    norm.map((v, i) => ({
+      x: pad.l + (i / Math.max(rows.length - 1, 1)) * plotW,
+      y: pad.t + plotH - (v / 100) * plotH,
+    }));
+
+  const aPts = buildPts(aNorm);
+  const bPts = buildPts(bNorm);
+
+  // ── Draw ──
+  function drawGrid() {
+    ctx.strokeStyle = 'rgba(255,255,255,.06)';
+    ctx.lineWidth   = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + (plotH / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(pad.l + plotW, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawLine(pts, color) {
+    if (pts.length < 2) return;
     ctx.beginPath();
     pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
-  };
-  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1;
-  for (let i = 0; i <= 3; i++) { const y = pad.t + (plotH / 3) * i; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(width - pad.r, y); ctx.stroke(); }
-  drawLine(aPts, '#ff6600');
-  drawLine(bPts, '#4a9eff');
-  const labels = [0, Math.floor((rows.length - 1) / 2), rows.length - 1];
-  ctx.fillStyle = '#555550'; ctx.font = '9px IBM Plex Mono, monospace'; ctx.textAlign = 'center';
-  labels.forEach(i => ctx.fillText(rows[i].date.slice(5), pad.l + (i / Math.max(rows.length - 1, 1)) * plotW, height - 6));
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#ff6600'; ctx.beginPath(); ctx.arc(width - 68, 22, 3, 0, Math.PI * 2); ctx.fill(); ctx.fillText(data.a.label, width - 60, 25);
-  ctx.fillStyle = '#4a9eff'; ctx.beginPath(); ctx.arc(width - 68, 39, 3, 0, Math.PI * 2); ctx.fill(); ctx.fillText(data.b.label, width - 60, 42);
-  const aLast = aPts[aPts.length - 1], bLast = bPts[bPts.length - 1];
-  ctx.font = '9px IBM Plex Mono, monospace';
-  ctx.fillStyle = '#ff6600'; ctx.fillText(compareFmt(rows[rows.length - 1].a, data.a), aLast.x + 6, aLast.y + 3);
-  ctx.fillStyle = '#4a9eff'; ctx.fillText(compareFmt(rows[rows.length - 1].b, data.b), bLast.x + 6, bLast.y + 3);
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 1.8;
+    ctx.lineJoin    = 'round';
+    ctx.stroke();
+  }
+
+  function drawFill(pts, color) {
+    if (pts.length < 2) return;
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    ctx.lineTo(aPts[aPts.length - 1].x, pad.t + plotH);
+    ctx.lineTo(pad.l, pad.t + plotH);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function drawDateLabels() {
+    ctx.fillStyle  = '#555550';
+    ctx.font       = `9px IBM Plex Mono, monospace`;
+    ctx.textAlign  = 'center';
+    const indices  = [0, Math.floor((rows.length - 1) / 2), rows.length - 1];
+    indices.forEach(i => {
+      const dateStr = (rows[i]?.date || '').slice(5); // MM-DD
+      ctx.fillText(dateStr, pad.l + (i / Math.max(rows.length - 1, 1)) * plotW, height - 8);
+    });
+  }
+
+  function renderBase() {
+    ctx.clearRect(0, 0, width, height);
+    drawGrid();
+    drawFill(aPts, 'rgba(255,102,0,0.07)');
+    drawFill(bPts, 'rgba(74,158,255,0.07)');
+    drawLine(aPts, '#ff6600');
+    drawLine(bPts, '#4a9eff');
+    drawDateLabels();
+  }
+
+  renderBase();
+
+  // ── Crosshair + tooltip ──
+  const ttEl      = chart.querySelector('#compare-tooltip');
+  const ttDate    = chart.querySelector('#ctt-date');
+  const ttLabelA  = chart.querySelector('#ctt-label-a');
+  const ttValA    = chart.querySelector('#ctt-val-a');
+  const ttLabelB  = chart.querySelector('#ctt-label-b');
+  const ttValB    = chart.querySelector('#ctt-val-b');
+  const ttRel     = chart.querySelector('#ctt-rel');
+
+  function fmtVal(v, meta) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '--';
+    if (meta.unit === '₹' || meta.unit === '$') {
+      return (meta.unit === '₹' ? '₹' : '$') + n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+    if (meta.unit === '%') return n.toFixed(3) + '%';
+    if (meta.type === 'flow') return (n >= 0 ? '+' : '') + Math.round(n).toLocaleString('en-IN') + ' Cr';
+    return n.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + (meta.unit ? ' ' + meta.unit : '');
+  }
+
+  function relGlyph(row, prev) {
+    if (!prev) return '';
+    const aUp = Number(row.a) >= Number(prev.a);
+    const bUp = Number(row.b) >= Number(prev.b);
+    const dirs = (aUp ? '▲' : '▼') + ' ' + data.a.label + '   ' + (bUp ? '▲' : '▼') + ' ' + data.b.label;
+    return aUp === bUp ? '⟶ Moving together — ' + dirs : '⟷ Diverging — ' + dirs;
+  }
+
+  function drawCrosshair(x, idx) {
+    renderBase(); // redraw clean
+
+    // Vertical line
+    ctx.beginPath();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth   = 1;
+    ctx.moveTo(x, pad.t);
+    ctx.lineTo(x, pad.t + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Dots on each line
+    const ap = aPts[idx];
+    const bp = bPts[idx];
+    if (ap) {
+      ctx.beginPath();
+      ctx.arc(ap.x, ap.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle   = '#ff6600';
+      ctx.fill();
+      ctx.strokeStyle = '#0a0a0a';
+      ctx.lineWidth   = 1.5;
+      ctx.stroke();
+    }
+    if (bp) {
+      ctx.beginPath();
+      ctx.arc(bp.x, bp.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle   = '#4a9eff';
+      ctx.fill();
+      ctx.strokeStyle = '#0a0a0a';
+      ctx.lineWidth   = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function positionTooltip(mouseX, mouseY) {
+    if (!ttEl) return;
+    const chartRect = chart.getBoundingClientRect();
+    const cW = chart.clientWidth;
+    const cH = chart.clientHeight;
+
+    // Clamp to keep inside chart
+    let left = mouseX + 14;
+    let top  = mouseY - 10;
+
+    const ttW = ttEl.offsetWidth  || 160;
+    const ttH = ttEl.offsetHeight || 90;
+
+    if (left + ttW > cW - 4)  left = mouseX - ttW - 14;
+    if (top  + ttH > cH - 4)  top  = mouseY - ttH - 10;
+    if (left < 4)              left = 4;
+    if (top  < 4)              top  = 4;
+
+    ttEl.style.left = left + 'px';
+    ttEl.style.top  = top  + 'px';
+  }
+
+  function onMove(clientX, clientY) {
+    const rect   = canvas.getBoundingClientRect();
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
+
+    // Map mouseX → index in rows
+    const idx = Math.round(((mouseX - pad.l) / plotW) * (rows.length - 1));
+    if (idx < 0 || idx >= rows.length) {
+      hideTooltipCompare();
+      return;
+    }
+
+    const row  = rows[idx];
+    const prev = rows[idx - 1] || null;
+
+    drawCrosshair(pad.l + (idx / Math.max(rows.length - 1, 1)) * plotW, idx);
+
+    // Fill tooltip
+    if (ttDate)   ttDate.textContent  = row.date || '';
+    if (ttLabelA) ttLabelA.textContent = data.a.label + ':';
+    if (ttValA)   ttValA.textContent   = fmtVal(row.a, data.a);
+    if (ttLabelB) ttLabelB.textContent = data.b.label + ':';
+    if (ttValB)   ttValB.textContent   = fmtVal(row.b, data.b);
+    if (ttRel)    ttRel.textContent    = relGlyph(row, prev);
+
+    if (ttEl) {
+      ttEl.classList.add('visible');
+      // Use relative position within chart div
+      const chartRect = chart.getBoundingClientRect();
+      positionTooltip(clientX - chartRect.left, clientY - chartRect.top);
+    }
+  }
+
+  function hideTooltipCompare() {
+    renderBase();
+    if (ttEl) ttEl.classList.remove('visible');
+  }
+
+  // Mouse events
+  canvas.addEventListener('mousemove', (e) => {
+    onMove(e.clientX, e.clientY);
+  });
+  canvas.addEventListener('mouseleave', hideTooltipCompare);
+
+  // Touch events (mobile)
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length > 0) {
+      onMove(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: false });
+  canvas.addEventListener('touchend', () => {
+    setTimeout(hideTooltipCompare, 1200); // linger a moment on mobile
+  });
 }
+
 
 function relationshipGlyph(row, prev) {
   if (!prev) return { text: 'BASE', cls: '' };
@@ -1700,7 +1929,8 @@ function generateSOP(data, profile) {
   sections.push(section('DOMESTIC FLOWS', fiiText, fiiNet > 250 ? 'tailwind' : fiiNet < -250 ? 'headwind' : 'neutral', weights.fii));
 
   const vix = sopNum(data.vix?.price);
-  const vixWarning = profile.riskLabel === 'DEFENSIVE' ? vix > 16 : profile.riskLabel === 'AGGRESSIVE' ? vix > 22 : vix > 18;
+  const vixPct = sopNum(data.vix?.percent_change); // Dynamic check
+  const vixWarning = profile.riskLabel === 'DEFENSIVE' ? (vix > 15 || vixPct > 5) : profile.riskLabel === 'AGGRESSIVE' ? (vix > 20 || vixPct > 10) : (vix > 17 || vixPct > 7);
   sections.push(section('VOLATILITY', `India VIX is ${vix.toFixed(2)} (${data.vix?.level || 'unknown'}) and ${data.vix?.trend_3d || 'flat'} over three sessions.`, vixWarning ? 'headwind' : vix < 13 ? 'tailwind' : 'neutral', weights.vix));
 
   if (profile.signalLabel !== 'FUNDAMENTAL') {
@@ -1717,9 +1947,16 @@ function generateSOP(data, profile) {
   }
 
   const crude = sopNum(data.macro?.crude?.price);
+  const crudePct = sopNum(data.macro?.crude?.percent_change);
   const usdinr = sopNum(data.macro?.usdinr?.price);
-  const macroStress = crude > 90 || usdinr > 84;
-  sections.push(section('MACRO STRESS', `Crude is ${crude.toFixed(2)} (${sopFmtPct(data.macro?.crude?.percent_change)}), USD/INR is ${usdinr.toFixed(2)}, and DXY is ${sopFmtPct(data.macro?.dxy?.percent_change)}.`, macroStress ? 'headwind' : 'neutral', Math.max(weights.crude, weights.gsec)));
+  const usdinrPct = sopNum(data.macro?.usdinr?.percent_change);
+  const dxyPct = sopNum(data.macro?.dxy?.percent_change);
+  
+  const macroStress = crudePct > 1.5 || usdinrPct > 0.25 || dxyPct > 0.3;
+  const macroRelief = crudePct < -1.5 || usdinrPct < -0.25 || dxyPct < -0.3;
+  const macroSignal = macroStress ? 'headwind' : macroRelief ? 'tailwind' : 'neutral';
+  
+  sections.push(section('MACRO TAPE', `Crude is ${crude.toFixed(2)} (${sopFmtPct(crudePct)}), USD/INR is ${usdinr.toFixed(2)} (${sopFmtPct(usdinrPct)}), and DXY shifted ${sopFmtPct(dxyPct)}.`, macroSignal, Math.max(weights.crude, weights.gsec)));
 
   const visible = sections.filter(s => s.weight >= 0.25);
   
@@ -1743,13 +1980,31 @@ function generateSOP(data, profile) {
   let overall = counts.tailwind > counts.headwind ? 'tailwind' : counts.headwind > counts.tailwind ? 'headwind' : 'neutral';
   if (profile.riskLabel === 'DEFENSIVE' && counts.headwind >= counts.tailwind) overall = 'headwind';
   if (profile.riskLabel === 'AGGRESSIVE' && counts.tailwind >= counts.headwind - 1) overall = 'tailwind';
-  const dominant = overall === 'tailwind' ? 'Tailwinds are stronger than warnings.' : overall === 'headwind' ? 'Warnings dominate the setup.' : 'Signals are mixed and require confirmation.';
-  const implication = overall === 'tailwind'
-    ? (profile.riskLabel === 'AGGRESSIVE' ? 'Look for breakout participation, but keep invalidation tight.' : 'Prefer selective longs over broad exposure.')
-    : overall === 'headwind'
-      ? 'Protect capital first and wait for cleaner confirmation.'
-      : 'Stay balanced and let price confirm direction.';
-  return { sections: visible, synthesis: { text: `${profile.name} setup. ${dominant} ${implication}`, signal: overall } };
+  
+  // Make synthesis much more personal and dynamic based on their exact profile sliders
+  const persona = `${profile.riskLabel.toLowerCase()} ${profile.signalLabel.toLowerCase()}`;
+  let dominant = overall === 'tailwind' 
+    ? 'Tailwinds currently outstrip warnings.' 
+    : overall === 'headwind' 
+      ? 'Warning signals dominate the tape.' 
+      : 'Signals are highly mixed requiring strict confirmation.';
+      
+  let implication = '';
+  if (overall === 'tailwind') {
+    implication = profile.riskLabel === 'AGGRESSIVE' 
+      ? `As an ${persona} trader, you can lean into breakouts, but maintain strict trailing stops.` 
+      : `Given your ${persona} profile, slowly accumulate quality names on intraday dips.`;
+  } else if (overall === 'headwind') {
+    implication = profile.riskLabel === 'DEFENSIVE' 
+      ? `Aligning with your ${persona} stance, preserve capital and avoid catching falling knives.` 
+      : `Even with your ${persona} approach, size down and wait for cleaner structure before deploying capital.`;
+  } else {
+    implication = profile.signalLabel === 'TECHNICAL'
+      ? `Since you heavily favor technicals, let price action confirm the breakout or breakdown before acting.`
+      : `Stick to high-conviction fundamental picks while the broader market chops.`;
+  }
+
+  return { sections: visible, synthesis: { text: `Your ${profile.name} Brief: ${dominant} ${implication}`, signal: overall } };
 }
 
 function renderSOP() {
@@ -2399,63 +2654,67 @@ function restoreLayout() {
 
 // ── KEYBOARD SHORTCUTS ──
 function initTabScroll() {
-  const tabs = document.getElementById('rp-tabs');
-  const arrow = document.getElementById('rp-tabs-arrow');
+  const tabs      = document.getElementById('rp-tabs');
+  const arrow     = document.getElementById('rp-tabs-arrow');
   const container = document.getElementById('rp-tabs-container');
   if (!tabs || !arrow || !container) return;
 
   updateArrowVisibility = function () {
-    const hasOverflow = tabs.scrollWidth > tabs.clientWidth;
-    const atEnd = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 4;
-    const atStart = tabs.scrollLeft > 4;
+    const hasOverflow = tabs.scrollWidth > tabs.clientWidth + 4;
+    const atEnd       = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 6;
+    const atStart     = tabs.scrollLeft > 4;
 
-    if (hasOverflow && !atEnd) {
-      arrow.classList.add('visible');
-      arrow.setAttribute('aria-label', 'Scroll tabs right');
+    // Show/hide arrow
+    if (hasOverflow) {
+      arrow.classList.remove('hidden');
+      arrow.textContent = atEnd ? '‹' : '›';  // flip direction at end
+      arrow.title       = atEnd ? 'Scroll back' : 'More tabs →';
     } else {
-      arrow.classList.remove('visible');
-      arrow.setAttribute('aria-label', 'Scroll tabs to start');
+      arrow.classList.add('hidden');
     }
 
+    // Left-fade when scrolled
     if (atStart) container.classList.add('scrolled-left');
-    else container.classList.remove('scrolled-left');
+    else         container.classList.remove('scrolled-left');
   };
 
   tabs.addEventListener('scroll', updateArrowVisibility);
-  window.addEventListener('resize', updateArrowVisibility);
+
+  // Translate vertical wheel scrolling to horizontal
+  tabs.addEventListener('wheel', (e) => {
+    // Only intercept if it's primarily vertical scrolling
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      tabs.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+
+  // Re-check on resize (handles orientation change on phones)
+  const ro = new ResizeObserver(() => updateArrowVisibility());
+  ro.observe(tabs);
+
   updateArrowVisibility();
 }
+
 
 function scrollTabsRight() {
   const tabs = document.getElementById('rp-tabs');
   if (!tabs) return;
 
-  const tabEls = tabs.querySelectorAll('.rp-tab');
-  const tabsRight = tabs.getBoundingClientRect().right;
+  const atEnd = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 6;
 
-  let targetTab = null;
-  for (const tab of tabEls) {
-    const rect = tab.getBoundingClientRect();
-    if (rect.right > tabsRight - 4) {
-      targetTab = tab;
-      break;
-    }
-  }
-
-  if (targetTab) {
-    tabs.scrollTo({
-      left: targetTab.offsetLeft - 8,
-      behavior: 'smooth'
-    });
-  } else {
+  if (atEnd) {
+    // Scroll back to start
     tabs.scrollTo({ left: 0, behavior: 'smooth' });
+  } else {
+    // Scroll right by 60% of the visible width
+    tabs.scrollBy({ left: tabs.clientWidth * 0.6, behavior: 'smooth' });
   }
 
-  setTimeout(() => {
-    if (updateArrowVisibility) updateArrowVisibility();
-  }, 350);
+  setTimeout(() => { if (updateArrowVisibility) updateArrowVisibility(); }, 350);
 }
 window.scrollTabsRight = scrollTabsRight;
+
 
 const KEY_HELP = [['R','Refresh news'],['M','Market'],['B','Banks'],['S','Sectors'],['A','Macro'],['T','Stocks'],['G','Global'],['C','Compare views'],['P','SOP brief'],['1','Story'],['2','Advice'],['3','Global markets'],['4','Heatmap'],['5','MF/ETF'],['6','Commodities'],['7','Lock-in'],['8','Sentiment'],['?','Help']];
 let helpVisible = false;

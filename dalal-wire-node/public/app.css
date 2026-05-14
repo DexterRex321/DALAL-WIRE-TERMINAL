@@ -329,87 +329,132 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 
 /* ── (STALE NEWS AREA DEFINITIONS REMOVED) ── */
 
-/* ── RIGHT PANEL TABS ── */
-#rp-tabs-container{
-  position:relative;
-  display:flex;
-  align-items:stretch;
-  border-bottom:1px solid var(--line);
-  background:var(--bg1);
-  flex-shrink:0;
+/* ── RIGHT PANEL TABS  (REPLACE the entire block in app.css) ── */
+#rp-tabs-container {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg1);
+  flex-shrink: 0;
+  min-width: 0;
 }
-#rp-tabs-container::before{
-  content:'';
-  position:absolute;
-  left:0;
-  top:0;
-  bottom:0;
-  width:20px;
-  background:linear-gradient(to right,var(--bg1),transparent);
-  pointer-events:none;
-  z-index:1;
-  opacity:0;
-  transition:opacity 0.2s;
+
+/* Left fade-edge when scrolled */
+#rp-tabs-container::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  background: linear-gradient(to right, var(--bg1), transparent);
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.2s;
 }
-#rp-tabs-container.scrolled-left::before{opacity:1}
-#rp-tabs{
-  display:flex;
-  overflow-x:auto;
-  scrollbar-width:none;
-  flex:1;
-  min-width:0;
-  scroll-behavior:smooth;
+#rp-tabs-container.scrolled-left::before { opacity: 1; }
+
+#rp-tabs {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) transparent;
+  flex: 1;
+  min-width: 0;
+  overscroll-behavior-x: contain; /* Prevents swipe navigation on Mac/mobile */
 }
-#rp-tabs::-webkit-scrollbar{display:none}
-.rp-tab{
-  flex:0 0 auto;
-  padding:12px 14px;
-  color:var(--muted);
-  font-size:10px;
-  font-weight:600;
-  letter-spacing:0.12em;
-  cursor:pointer;
-  border-right:1px solid var(--line);
-  white-space:nowrap;
-  transition:all 0.1s;
-  text-transform:uppercase;
+#rp-tabs::-webkit-scrollbar { height: 4px; }
+#rp-tabs::-webkit-scrollbar-track { background: transparent; }
+#rp-tabs::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+.rp-tab {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  border-right: 1px solid var(--line);
+  white-space: nowrap;
+  transition: all 0.1s;
+  text-transform: uppercase;
+  user-select: none;
 }
-.rp-tab:hover{color:var(--text);background:var(--bg2)}
-.rp-tab.active-rp-tab{color:var(--orange);background:var(--bg);box-shadow:inset 0 -2px 0 var(--orange);}
-#rp-tabs-arrow{
-  display:none;
-  align-items:center;
-  justify-content:center;
-  flex-shrink:0;
-  width:28px;
-  background:linear-gradient(to right,transparent,var(--bg1) 40%);
-  border:none;
-  border-left:none;
-  color:var(--muted);
-  font-size:16px;
-  cursor:pointer;
-  padding:0;
-  transition:color 0.12s;
-  position:relative;
-  z-index:2;
+.rp-tab:hover { color: var(--text); background: var(--bg2); }
+.rp-tab.active-rp-tab {
+  color: var(--orange);
+  background: var(--bg);
+  box-shadow: inset 0 -2px 0 var(--orange);
 }
-#rp-tabs-arrow:hover{color:var(--text)}
-#rp-tabs-arrow.visible{display:flex}
+
+/* Arrow scroll button — ALWAYS rendered, visibility toggled via JS */
+#rp-tabs-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  min-width: 36px;
+  background: linear-gradient(to right, transparent 0%, var(--bg1) 35%);
+  border: none;
+  border-left: none;
+  color: var(--orange);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.12s, background 0.12s;
+  position: relative;
+  z-index: 3;
+  /* Always visible — remove the old .visible class show/hide */
+  opacity: 1;
+}
+#rp-tabs-arrow:hover { color: var(--text); }
+/* Hide arrow only when there truly is no overflow */
+#rp-tabs-arrow.hidden { display: none; }
 
 
-/* ── TICKER ROW ── */
-#rp-ticker-row{display:flex;gap:6px;margin-left:auto}
-#rp-ticker-row input{
-  background:var(--bg2);border:1px solid var(--line2);color:var(--text);
-  font-family:var(--mono);font-size:13px;padding:6px 12px;
-  border-radius:2px;outline:none;width:200px;
+
+/* ── TICKER ROW  (REPLACE in app.css) ── */
+#rp-ticker-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg1);
+  align-items: center;
+  flex-shrink: 0;
 }
-#rp-ticker-row input:focus{border-color:var(--muted);}
-#rp-ticker-row button{
-  background:var(--bg2);border:1px solid var(--line2);color:var(--muted);
-  font-family:var(--mono);font-size:11px;padding:6px 14px;cursor:pointer;border-radius:2px;
+#rp-ticker-row > div { flex: 1; min-width: 0; position: relative; }
+#rp-ticker-row input {
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: 2px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
 }
-#rp-ticker-row button:hover{border-color:var(--muted);color:var(--text);}
+#rp-ticker-row input:focus { border-color: var(--muted); }
+#rp-ticker-row button {
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#rp-ticker-row button:hover { border-color: var(--muted); color: var(--text); }
+
 
 /* ── STORY / DETAIL ── */
 #rp-story{overflow-y:auto;flex:1;min-height:0;scrollbar-gutter:stable;overscroll-behavior:contain}
@@ -1216,46 +1261,194 @@ body.dalal-focus-mode #headlines{max-width:0;opacity:0;border-right-color:transp
 body.dalal-focus-mode #nav-widget{opacity:0;transform:translateY(12px);pointer-events:none}
 #nav-widget{transition:opacity var(--tMed) var(--ease2), transform var(--tMed) var(--ease2)}
 
-@media (max-width: 1180px){
-  #topbar{flex-wrap:wrap;gap:10px;height:auto;min-height:var(--tb-h);padding:8px 18px}
-  .topright{width:100%;justify-content:flex-end;flex-wrap:wrap}
-  #search-bar{flex-wrap:wrap}
-  #rp-ticker-row{margin-left:0;width:100%}
-  #rp-ticker-row input{width:100%}
-  #body{grid-template-columns:300px 500px minmax(0,1fr)}
+/* ══ MOBILE & RESPONSIVE ══ */
+
+/* Tablet (1180px) */
+@media (max-width: 1180px) {
+  #topbar { flex-wrap: wrap; gap: 8px; height: auto; min-height: var(--tb-h); padding: 8px 14px; }
+  .topright { width: 100%; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+  #body { grid-template-columns: 280px 460px minmax(0,1fr); }
 }
-@media (max-width: 980px){
-  html,body,#bb{overflow:auto}
-  #bb{height:auto;min-height:100vh;width:100%}
-  #body{grid-template-columns:1fr;min-height:auto}
-  #sidebar{max-height:none;border-right:none;border-bottom:1px solid var(--stroke)}
-  #content-area{height:auto;min-height:0}
-  #news-area{grid-template-columns:1fr}
-  #headlines{max-height:38vh}
-  #right-panel{min-height:64vh}
-  #rp-tabs-container{position:sticky;top:0;background:linear-gradient(to bottom, rgba(10,10,24,.98), rgba(10,10,24,.92))}
-  .topright{justify-content:flex-start}
-  .state-shell-head{flex-direction:column}
-  .state-modal-backdrop{padding:18px}
-  .state-modal-stack{max-width:100%;display:block}
-  .state-modal-card{width:100%;padding:18px}
-  .state-modal-card-stock{position:relative;top:auto;right:auto;width:100%;margin-top:14px}
-  .state-modal-row{grid-template-columns:28px 1fr 62px;grid-template-areas:'rank name weight' 'rank bar bar'}
-  .state-modal-rank{grid-area:rank}
-  .state-modal-name-block{grid-area:name}
-  .state-modal-weight{grid-area:weight;justify-self:end}
-  .state-modal-bar{grid-area:bar}
-  .state-detail-grid{grid-template-columns:1fr}
-  .state-table-head{display:none}
-  .state-row{grid-template-columns:32px 1fr 72px;grid-template-areas:'rank name weight' 'rank price change' 'rank range range'}
-  .state-rank{grid-area:rank}
-  .state-name-block{grid-area:name}
-  .state-weight{grid-area:weight;justify-self:end}
-  .state-price-col{grid-area:price}
-  .state-change{grid-area:change}
-  .state-range{grid-area:range;color:#8b846e;font-size:11px}
-  .state-bar-main,.state-bar-meta,.state-range-head,.state-range-values{align-items:flex-start;flex-direction:column}
+
+/* Narrow desktop / large tablet (980px) */
+@media (max-width: 980px) {
+  html, body, #bb { overflow-y: auto; overflow-x: hidden; }
+  #bb { height: auto; min-height: 100vh; width: 100%; }
+
+  /* Stack the 3-column layout into single column */
+  #body {
+    grid-template-columns: 1fr;
+    display: grid;
+    min-height: auto;
+  }
+
+  #sidebar {
+    height: auto;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    overflow-y: visible;
+  }
+
+  #news-column {
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    max-height: none;
+    flex: none;
+  }
+
+  #headlines { max-height: 42vh; overflow-y: auto; }
+
+  #right-panel {
+    height: auto;
+    flex: none;
+    min-height: 0;
+  }
+
+  /* Sticky tab bar so it doesn't scroll away */
+  #rp-tabs-container {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg1);
+  }
+
+  .topright { justify-content: flex-start; }
+
+  /* State modal adjustments */
+  .state-shell-head { flex-direction: column; }
+  .state-modal-backdrop { padding: 12px; }
+  .state-modal-stack { max-width: 100%; display: block; }
+  .state-modal-card { width: 100%; padding: 14px; }
+  .state-modal-card-stock { position: relative; top: auto; right: auto; width: 100%; margin-top: 12px; }
+  .state-modal-row {
+    grid-template-columns: 28px 1fr 62px;
+    grid-template-areas: 'rank name weight' 'rank bar bar';
+  }
+  .state-modal-rank { grid-area: rank; }
+  .state-modal-name-block { grid-area: name; }
+  .state-modal-weight { grid-area: weight; justify-self: end; }
+  .state-modal-bar { grid-area: bar; }
+  .state-detail-grid { grid-template-columns: 1fr; }
+  .state-table-head { display: none; }
+  .state-row {
+    grid-template-columns: 32px 1fr 72px;
+    grid-template-areas: 'rank name weight' 'rank price change' 'rank range range';
+  }
+  .state-rank { grid-area: rank; }
+  .state-name-block { grid-area: name; }
+  .state-weight { grid-area: weight; justify-self: end; }
+  .state-price-col { grid-area: price; }
+  .state-change { grid-area: change; }
+  .state-range { grid-area: range; color: #8b846e; font-size: 11px; }
+  .state-bar-main, .state-bar-meta, .state-range-head, .state-range-values {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
+
+/* Phone (640px) */
+@media (max-width: 640px) {
+  :root {
+    --tb-h: auto;
+    --tk-h: 28px;
+    font-size: 12px;
+  }
+
+  #topbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .brand { font-size: 13px; }
+  .brand span { display: none; } /* hide "WIRE TERMINAL" on tiny screens */
+
+  .topright {
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .topright button { font-size: 10px; padding: 5px 10px; }
+  .top-meta-pill { font-size: 9px; padding: 0 7px; height: 22px; }
+  .clk { font-size: 14px; }
+  .mkt-open, .mkt-closed { font-size: 11px; padding: 4px 8px; }
+
+  /* Ticker strip — slower, legible */
+  #ticker-inner { animation-duration: 80s; }
+  .ti { padding: 0 12px; font-size: 10px; }
+
+  /* Events strip */
+  #events-strip { padding: 0 10px; }
+  .esi-title { max-width: 80px; }
+  #events-strip-more { padding: 0 8px; }
+
+  /* Sidebar — compact */
+  #sidebar { padding-bottom: 6px; }
+  .idx-cell { padding: 10px 10px; }
+  .idx-name { font-size: 10px; }
+  .idx-val { font-size: 13px; }
+  .macro-row { padding: 7px 10px; font-size: 10px; }
+
+  /* News panel */
+  #search-bar { padding: 8px 10px; gap: 6px; }
+  #search-bar input { font-size: 12px; padding: 7px 10px; }
+  .chips { padding: 8px 10px; gap: 5px; }
+  .chip { font-size: 9px; padding: 5px 9px; }
+
+  /* Right panel tabs — phone-optimised */
+  .rp-tab { padding: 10px 11px; font-size: 9px; letter-spacing: 0.09em; }
+  #rp-tabs-arrow { width: 30px; min-width: 30px; font-size: 16px; }
+
+  #rp-ticker-row { padding: 6px 10px; }
+  #rp-ticker-row input { font-size: 11px; padding: 6px 10px; }
+
+  /* Compare + MF panels */
+  .compare-builder-row { flex-wrap: wrap; gap: 8px; }
+  .compare-select-wrap { flex: 1 1 120px; }
+  #compare-run-btn { width: 100%; }
+  #compare-quick-pairs { gap: 4px; }
+  .compare-chip { font-size: 8px; padding: 3px 8px; }
+
+  .mf-grid { grid-template-columns: 1fr; }
+
+  /* SOP sliders */
+  #sop-sliders { padding: 12px 10px; }
+  .sop-slider-row { gap: 6px; }
+  .sop-slider-label { font-size: 8px; min-width: 54px; }
+
+  /* Heatmap */
+  .hm-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
+
+  /* MCX */
+  .mcx-grid { grid-template-columns: 1fr 1fr; }
+
+  /* Status bar */
+  #statusbar { gap: 10px; font-size: 9px; }
+  #statusbar > span:nth-child(2) { display: none; } /* hide "NSE · BSE · Yahoo" on tiny */
+
+  /* Nav widget */
+  #nav-widget { bottom: 12px; left: 12px; }
+
+  /* Modals full-screen on phone */
+  .state-modal-backdrop { padding: 0; align-items: flex-end; }
+  .state-modal-card { border-radius: 0; max-height: 85vh; overflow-y: auto; }
+}
+
+/* Ultra-small (380px — older androids) */
+@media (max-width: 380px) {
+  .rp-tab { padding: 10px 9px; font-size: 8px; }
+  .idx-val { font-size: 12px; }
+  .chip { font-size: 8px; padding: 4px 7px; }
+}
+
+/* Landscape phone — give more vertical space */
+@media (max-height: 500px) and (max-width: 900px) {
+  #ticker-strip { display: none; }
+  #events-strip { display: none; }
+  #headlines { max-height: 30vh; }
+  #right-panel { min-height: 50vh; }
+}
+
 
 /* --- BRIDGE COMPONENTS: PULSE & ADVICE --- */
 .pulse-container { padding: 20px; font-family: var(--mono); color: var(--text); }
@@ -1583,27 +1776,56 @@ input[type=range].sop-range::-moz-range-thumb {
   border-left-color: var(--gold, #ffbf3d);
   background: rgba(255,191,61,.08);
 }
+/* ── COMPARE PANEL — tooltip + crosshair ── */
 #compare-chart {
   border: 1px solid var(--line);
   background: var(--bg1);
   padding: 12px;
   margin-bottom: 12px;
+  position: relative;
+  user-select: none;
 }
 .compare-chart-head {
   display: flex;
   justify-content: space-between;
   margin-bottom: 8px;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .compare-dual-canvas {
   width: 100%;
   height: 160px;
   display: block;
+  cursor: crosshair;
 }
-.compare-axis-label {
-  color: var(--dim);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+.compare-axis-label { color: var(--dim); font-size: 9px; letter-spacing: 0.1em; }
+
+/* Tooltip bubble */
+#compare-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  background: var(--bg1);
+  border: 1px solid var(--line2);
+  padding: 8px 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  display: none;
+  min-width: 150px;
 }
+#compare-tooltip.visible { display: block; }
+#compare-tooltip .ctt-date { color: var(--dim); font-size: 9px; letter-spacing: 0.1em; margin-bottom: 4px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+#compare-tooltip .ctt-row { display: flex; justify-content: space-between; gap: 14px; }
+#compare-tooltip .ctt-label { color: var(--muted); }
+#compare-tooltip .ctt-val-a { color: #ff6600; font-weight: 600; }
+#compare-tooltip .ctt-val-b { color: #4a9eff; font-weight: 600; }
+#compare-tooltip .ctt-rel { color: var(--dim); font-size: 9px; margin-top: 3px; border-top: 1px solid var(--line); padding-top: 3px; }
+
 #compare-meta {
   display: flex;
   align-items: center;
