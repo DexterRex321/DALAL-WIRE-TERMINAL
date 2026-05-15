@@ -40,7 +40,7 @@ git push -u origin main
 1. Push to GitHub
 2. Go to render.com → New Web Service
 3. Connect repo
-4. Set environment variables (e.g., TWELVE_DATA_KEY, INTERNAL_API_SECRET, etc.) in Render Dashboard.
+4. Set environment variables (e.g., `API_SECRET`, `ALLOWED_ORIGINS`, `DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`) in Render Dashboard.
 5. Build command: `npm install`
 6. Start command: `node server.js`
 7. Done — live at https://dalal-wire.onrender.com
@@ -49,5 +49,18 @@ git push -u origin main
 
 | Variable | Description |
 |---|---|
-| `TWELVE_DATA_KEY` | Your Twelve Data API key |
+| `API_SECRET` | Secret used to secure endpoints. Generate one with `npm run gen:secret`. Mandatory in production. |
+| `ALLOWED_ORIGINS` | Comma-separated list of origins allowed to access the API (e.g. `http://localhost:3000,https://your-domain.com`). |
+| `FEATURE_DHAN_API` | Set to `true` to enable broker integration. |
+| `DHAN_CLIENT_ID` | Your Dhan Client ID. Only used if `FEATURE_DHAN_API=true`. Keep secure. |
+| `DHAN_ACCESS_TOKEN` | Your Dhan Access Token. Only used if `FEATURE_DHAN_API=true`. Keep secure. |
 | `PORT` | Port (default: 3000) |
+
+## Security and API Authentication
+
+The Dalal Wire backend implements security using an `API_SECRET`.
+1. The frontend asks for a temporary token from `/api/auth/session` (which validates the browser origin via `ALLOWED_ORIGINS`).
+2. The backend provides a short-lived, fingerprint-bound token.
+3. The frontend passes this token in the `x-dalal-token` header for all subsequent API requests.
+
+**Important:** Never commit `.env` or your `API_SECRET`/`DHAN_ACCESS_TOKEN` to source control. They should be configured directly in your deployment platform (e.g., Render, Vercel). If `NODE_ENV=production` and `API_SECRET` is not set, the app will refuse to start.

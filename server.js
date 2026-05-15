@@ -31,7 +31,7 @@ const rateLimit = require('express-rate-limit');
 
 // ── DYNAMIC IMPORT: yahoo-finance2 (ESM) ──
 import YahooFinance from 'yahoo-finance2';
-const yf = new YahooFinance();
+const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR  = __dirname;
