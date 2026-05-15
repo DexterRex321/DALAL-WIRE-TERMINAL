@@ -1277,7 +1277,7 @@ body.dalal-focus-mode #nav-widget{opacity:0;transform:translateY(12px);pointer-e
 
   /* Stack the 3-column layout into single column */
   #body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     display: grid;
     min-height: auto;
   }
