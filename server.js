@@ -31,7 +31,9 @@ const rateLimit = require('express-rate-limit');
 
 // ── DYNAMIC IMPORT: yahoo-finance2 (ESM) ──
 import YahooFinance from 'yahoo-finance2';
+import { NseIndia } from 'stock-nse-india';
 const yf = new YahooFinance();
+const nse = new NseIndia();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR  = __dirname;
@@ -244,7 +246,7 @@ const TTL = {
   QUOTE:          10_000,   // 10s — Yahoo price quotes
   GLOBAL:         15_000,   // 15s — global indices
   FIIDII:         90_000,   // 90s — NSE FII/DII (EOD data, no need to hammer)
-  HEATMAP:        30_000,   // 30s — heatmap
+  HEATMAP:        15_000,   // 15s — heatmap (NSE single-call, can refresh faster
   NEWS:          120_000,   // 2m  — RSS news per category
   MFAPI:    4 * 3600_000,   // 4h  — MF NAV (daily data)
   SENTIMENT:15 * 60_000,    // 15m — Fear & Greed
@@ -453,8 +455,7 @@ function markStale(obj) {
 // Frontend relies safely on CORS Origin / Referer validation.
 
 // ── PAGE ROUTES ───────────────────────────────────────────────
-app.get('/',          (req, res) => res.sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge.html')));
-app.get('/bridge',    (req, res) => res.sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge.html')));
+app.get('/',          (req, res) => res.sendFile(DALAL_INDEX_FILE));
 app.get('/terminal',  (req, res) => res.sendFile(DALAL_INDEX_FILE));
 
 // Static assets (no auth needed)
@@ -510,7 +511,8 @@ app.get('/api/quotes', async (req, res) => {
   } catch (e) {
     const stale = getCache('quotes');
     if (stale) return res.json(markStale(stale.data));
-    res.status(500).json({ error: e.message });
+    logEndpointError('QUOTES', e);
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -530,7 +532,63 @@ app.get('/api/quote/:symbol', async (req, res) => {
   } catch (e) {
     const stale = getCache(key);
     if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
-    res.status(500).json({ error: e.message });
+    logEndpointError('QUOTES', e);
+    res.status(500).json(structuredEndpointError(e.message));
+  }
+});
+
+// ── NSE EQUITY DETAIL (richer than Yahoo quote) ──────────────
+app.get('/api/nse/equity/:symbol', async (req, res) => {
+  setApiCacheHeaders(res, 30, 60);
+  const symbol   = req.params.symbol.toUpperCase().replace('.NS', '');
+  const cacheKey = `nse_equity_${symbol}`;
+  if (isFresh(cacheKey, 30_000)) return res.json(getCache(cacheKey).data);
+  try {
+    let raw;
+    try {
+      raw = await nse.getEquityDetails(symbol);
+    } catch(err) {
+      logEndpointError('NSE-EQUITY-LIB', err);
+      raw = await fetchNse(`/api/quote-equity?symbol=${encodeURIComponent(symbol)}`);
+    }
+    const info = raw?.info            || {};
+    const meta = raw?.metadata        || {};
+    const price = raw?.priceInfo      || {};
+    const sec  = raw?.securityInfo    || {};
+    const ind  = raw?.industryInfo    || {};
+    const out = {
+      symbol,
+      name:            info.companyName    || symbol,
+      industry:        ind.industry        || '',
+      sector:          ind.sector          || '',
+      isin:            info.isin           || '',
+      listingDate:     info.listingDate    || '',
+      faceValue:       sec.faceValue       || '',
+      marketLot:       sec.issuedCap       || '',
+      cmp:             price.lastPrice     || 0,
+      open:            price.open          || 0,
+      close:           price.previousClose || 0,
+      high:            price.intraDayHighLow?.max || 0,
+      low:             price.intraDayHighLow?.min || 0,
+      week52High:      price.weekHighLow?.max     || 0,
+      week52Low:       price.weekHighLow?.min      || 0,
+      upperCircuit:    price.upperCP        || '',
+      lowerCircuit:    price.lowerCP        || '',
+      deliveryPct:     meta.deliveryToTradedQuantity || null,
+      totalTraded:     price.totalTradedVolume       || 0,
+      change:          price.change         || 0,
+      pctChange:       price.pChange        || 0,
+      freshness:       'LIVE',
+      source:          'NSE India',
+      ts:              new Date().toISOString(),
+    };
+    setCache(cacheKey, out);
+    res.json(out);
+  } catch (e) {
+    logEndpointError('NSE-EQUITY', e);
+    const stale = getCache(`nse_equity_${symbol}`);
+    if (stale) return res.json({ ...stale.data, freshness: 'FALLBACK', stale: true });
+    res.status(500).json(structuredEndpointError(`Equity detail unavailable for ${symbol}`));
   }
 });
 
@@ -569,7 +627,8 @@ app.get('/api/global', async (req, res) => {
   catch (e) {
     const stale = getCache('global');
     if (stale) return res.json(markStale(stale.data));
-    res.status(500).json({ error: e.message });
+    logEndpointError('QUOTES', e);
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -604,7 +663,7 @@ async function getIndiaVixQuote() {
 
 app.get('/api/india-vix', async (req, res) => {
   try { res.json(await getIndiaVixQuote()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  catch (e) { res.status(500).json(structuredEndpointError(e.message)); }
 });
 
 // ── NSE FII / DII ─────────────────────────────────────────────
@@ -691,7 +750,7 @@ app.get('/api/fiidii', async (req, res) => {
   catch (e) {
     const stale = getCache('fiidii');
     if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
-    res.status(500).json({ error: e.message });
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -993,7 +1052,7 @@ async function buildMacroContext() {
     }
     cards[key] = { ...q, signal, badge, implication };
   });
-  const out = { cards, freshness: 'LIVE', ts: new Date().toISOString() };
+  const out = { cards, freshness: 'DELAYED 15m', ts: new Date().toISOString() };
   setCache('macro_context', out);
   return out;
 }
@@ -1349,9 +1408,58 @@ app.get('/api/micro-series', async (req, res) => {
     res.json(out);
   } catch (e) {
     const stale = getCache('micro_series');
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError(e.message));
   }
+});
+
+// ── NSE MARKET STATUS ─────────────────────────────────────────
+async function getNseMarketStatus() {
+  const cacheKey = 'nse_market_status';
+  if (isFresh(cacheKey, 30_000)) return getCache(cacheKey).data;
+  try {
+    const raw = await nse.getMarketStatus();
+    // raw.marketState: array of market objects
+    const markets  = Array.isArray(raw?.marketState) ? raw.marketState : [];
+    const equities = markets.find(m =>
+      String(m.market || '').toUpperCase().includes('EQUITY') ||
+      String(m.marketStatus || '').length > 0
+    ) || markets[0] || {};
+    const isOpen = String(equities.marketStatus || '').toUpperCase() === 'OPEN';
+    const out = {
+      isOpen,
+      status:       equities.marketStatus || 'UNKNOWN',
+      tradeDate:    equities.tradeDate    || '',
+      index:        equities.index        || 'NIFTY 50',
+      freshness:    'LIVE',
+      source:       'NSE India',
+      ts:           new Date().toISOString(),
+    };
+    setCache(cacheKey, out);
+    return out;
+  } catch (e) {
+    // Fallback: clock-math (existing logic)
+    const now    = new Date();
+    const ist    = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const h      = ist.getHours();
+    const m      = ist.getMinutes();
+    const day    = ist.getDay();
+    const timeNum = h * 100 + m;
+    const isOpen  = day >= 1 && day <= 5 && timeNum >= 915 && timeNum <= 1530;
+    return {
+      isOpen,
+      status:    isOpen ? 'Open' : 'Closed',
+      tradeDate: '',
+      freshness: 'FALLBACK',
+      source:    'Clock estimate (NSE unavailable)',
+      ts:        new Date().toISOString(),
+    };
+  }
+}
+
+app.get('/api/market-status', async (req, res) => {
+  setApiCacheHeaders(res, 30, 30);
+  res.json(await getNseMarketStatus());
 });
 
 // ── FAST INDICES (10s TTL — dashboard primary load) ───────────
@@ -1586,8 +1694,8 @@ app.get('/api/sentiment', async (req, res) => {
     res.json(out);
   } catch (e) {
     const stale = getCache('sentiment_combined');
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -1702,7 +1810,64 @@ app.get('/api/dashboard', async (req, res) => {
     const g = global.status === 'fulfilled' ? global.value : {};
     res.json({ quotes: q, ...s, _globalFull: g, ts: new Date().toISOString() });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json(structuredEndpointError(e.message));
+  }
+});
+
+// ── NSE INDIA — INDEX CONSTITUENTS ──────────────────────────
+const NSE_INDEX_NAME_MAP = {
+  'NIFTY:NSE':     'NIFTY 50',
+  'SENSEX:BSE':    'SENSEX',
+  'BANKNIFTY:NSE': 'NIFTY BANK',
+};
+
+app.get('/api/nse/index/:key', async (req, res) => {
+  setApiCacheHeaders(res, 60, 120);
+  const key      = req.params.key.toUpperCase();
+  const cacheKey = `nse_index_${key}`;
+  if (isFresh(cacheKey, 60_000)) return res.json(getCache(cacheKey).data);
+  try {
+    const indexName = NSE_INDEX_NAME_MAP[key] || key.replace(/:.*/, '').replace(/_/g, ' ');
+    let raw;
+    try {
+      raw = await nse.getEquityStockIndices(indexName);
+    } catch(err) {
+      logEndpointError('NSE-INDEX-LIB', err);
+      raw = await fetchNse(`/api/equity-stockIndices?index=${encodeURIComponent(indexName)}`);
+    }
+    const stocks    = (raw?.data || []).map(s => ({
+      symbol:        s.symbol,
+      label:         s.meta?.companyName || s.symbol,
+      sector:        s.meta?.industry    || 'Unknown',
+      weight:        Number(s.perChange  || 0),   // NSE does not expose free-float
+                                                   // weight directly — perChange is
+                                                   // placeholder; frontend will show it
+      price:         Number(s.lastPrice  || 0),
+      change:        Number(s.change     || 0),
+      pctChange:     Number(s.pChange    || 0),
+      open:          Number(s.open       || 0),
+      high:          Number(s.dayHigh    || 0),
+      low:           Number(s.dayLow     || 0),
+      week52High:    Number(s['52wHigh'] || 0),
+      week52Low:     Number(s['52wLow']  || 0),
+      volume:        Number(s.totalTradedVolume || 0),
+      freshness:     'LIVE',
+      source:        'NSE India',
+    }));
+    const out = {
+      indexName,
+      count:     stocks.length,
+      stocks,
+      ts:        new Date().toISOString(),
+      freshness: 'LIVE',
+    };
+    setCache(cacheKey, out);
+    res.json(out);
+  } catch (e) {
+    logEndpointError('NSE-INDEX', e);
+    const stale = getCache(`nse_index_${key}`);
+    if (stale) return res.json({ ...stale.data, freshness: 'FALLBACK', stale: true });
+    res.status(500).json(structuredEndpointError('NSE index data unavailable'));
   }
 });
 
@@ -1776,35 +1941,89 @@ const HEATMAP_INDICES = {
 };
 
 app.get('/api/heatmap', async (req, res) => {
-  const setName = (req.query.set || 'nifty').toString().toLowerCase();
-  const key     = `heatmap_${setName}`;
-  if (isFresh(key, TTL.HEATMAP)) return res.json(getCache(key).data);
+  setApiCacheHeaders(res, 15, 30);
+  const setName  = (req.query.set || 'nifty').toString().toLowerCase();
+  const cacheKey = `heatmap_${setName}`;
+  if (isFresh(cacheKey, TTL.HEATMAP)) return res.json(getCache(cacheKey).data);
+
   try {
-    const isIndices = setName === 'indices' || setName === 'global';
-    const source    = isIndices ? HEATMAP_INDICES : NIFTY50;
-    const syms      = Object.keys(source);
-    const results   = await Promise.allSettled(syms.map(s => cachedYahooQuote(isIndices ? source[s].yahoo : s)));
-    const output    = [];
-    syms.forEach((sym, i) => {
-      const r = results[i]; const meta = source[sym];
-      if (r.status === 'fulfilled' && r.value) {
-        const q = r.value;
-        output.push({
-          sym:    isIndices ? sym : meta.label,
-          sector: meta.sector,
-          mcap:   meta.mcap,
-          price:  q.regularMarketPrice         ?? 0,
-          change: q.regularMarketChange        ?? 0,
-          pct:    q.regularMarketChangePercent ?? 0,
-        });
+    let output = [];
+
+    if (setName === 'indices' || setName === 'global') {
+      // Global index set — keep existing Yahoo multi-fetch (no NSE equivalent)
+      const syms    = Object.keys(HEATMAP_INDICES);
+      const results = await Promise.allSettled(
+        syms.map(s => cachedYahooQuote(HEATMAP_INDICES[s].yahoo))
+      );
+      syms.forEach((sym, i) => {
+        const r = results[i];
+        const meta = HEATMAP_INDICES[sym];
+        if (r.status === 'fulfilled' && r.value) {
+          const q = r.value;
+          output.push({
+            sym,
+            sector: meta.sector,
+            mcap:   meta.mcap,
+            price:  q.regularMarketPrice         ?? 0,
+            change: q.regularMarketChange        ?? 0,
+            pct:    q.regularMarketChangePercent ?? 0,
+          });
+        }
+      });
+    } else {
+      // Nifty 50 — single NSE call instead of 50 Yahoo calls
+      let raw;
+      try {
+        raw = await nse.getEquityStockIndices('NIFTY 50');
+      } catch(err) {
+        logEndpointError('NSE-HEATMAP-LIB', err);
+        raw = await fetchNse(`/api/equity-stockIndices?index=${encodeURIComponent('NIFTY 50')}`);
       }
-    });
-    setCache(key, output);
+      const stocks = raw?.data || [];
+      output = stocks.map(s => ({
+        sym:    s.symbol,
+        sector: s.meta?.industry || 'Unknown',
+        mcap:   Number(s.ffmc   || s.totalTradedValue || 0) / 1e4,
+        price:  Number(s.lastPrice || 0),
+        change: Number(s.change    || 0),
+        pct:    Number(s.pChange   || 0),
+        source: 'NSE India',
+      })).filter(s => s.price > 0);
+    }
+
+    setCache(cacheKey, output);
     res.json(output);
+
   } catch (e) {
-    const stale = getCache(`heatmap_${setName}`);
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    logEndpointError('HEATMAP', e);
+    // Fallback: try cache, then Yahoo multi-fetch for nifty set
+    const stale = getCache(cacheKey);
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    // Last-resort Yahoo fallback for nifty set
+    try {
+      const syms    = Object.keys(NIFTY50);
+      const results = await Promise.allSettled(syms.map(s => cachedYahooQuote(s)));
+      const fallback = [];
+      syms.forEach((sym, i) => {
+        const r = results[i];
+        const meta = NIFTY50[sym];
+        if (r.status === 'fulfilled' && r.value) {
+          const q = r.value;
+          fallback.push({
+            sym:    meta.label,
+            sector: meta.sector,
+            mcap:   meta.mcap,
+            price:  q.regularMarketPrice         ?? 0,
+            change: q.regularMarketChange        ?? 0,
+            pct:    q.regularMarketChangePercent ?? 0,
+            source: 'Yahoo (fallback)',
+          });
+        }
+      });
+      return res.json(fallback);
+    } catch {
+      res.status(500).json(structuredEndpointError(e.message));
+    }
   }
 });
 
@@ -1842,7 +2061,7 @@ app.get('/api/mfapi/search', async (req, res) => {
   const q = req.query.q || '';
   try {
     res.json(await fetchMfapi(`https://api.mfapi.in/mf/search?q=${encodeURIComponent(q)}`));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json(structuredEndpointError(e.message)); }
 });
 
 app.get('/api/mfapi/:code', async (req, res) => {
@@ -1855,8 +2074,9 @@ app.get('/api/mfapi/:code', async (req, res) => {
     res.json(data);
   } catch (e) {
     const stale = getCache(key);
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    logEndpointError('API', e);
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -2216,8 +2436,8 @@ app.get('/api/news/:category', async (req, res) => {
     res.json(stories);
   } catch (e) {
     const stale = getCache(key);
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -2281,7 +2501,7 @@ app.get('/api/advice/:ticker', async (req, res) => {
   } catch (e) {
     const stale = getCache(key);
     if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
-    res.status(500).json({ error: e.message });
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -2345,8 +2565,8 @@ app.get('/api/lockin', async (req, res) => {
     res.json(out);
   } catch (e) {
     const stale = getCache('lockin');
-    if (stale) return res.json(stale.data);
-    res.status(500).json({ error: e.message });
+    if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError(e.message));
   }
 });
 
@@ -2475,6 +2695,7 @@ app.get('/api/events', (req, res) => {
     next3,
     todayEvents,
     thisWeekCount,
+    isStatic: true,
     ts: new Date().toISOString()
   };
   setCache('events_cache', out);
@@ -2519,6 +2740,7 @@ app.get('/api/events/impact', (req, res) => {
     highImpactCount: highCount + critCount,
     eventDensity,
     headline,
+    isStatic: true,
     ts: new Date().toISOString()
   };
   setCache('events_impact_cache', out);
@@ -2561,7 +2783,7 @@ app.get('/api/bridge-signal', async (req, res) => {
   let vixVal = null;
   let niftyChg = null;
   let fiiNetVal = null;
-  let nearestEvent = eventsData?.next3?.[0] || null;
+  let nearestEvent = eventsData?.next3?.find(e => e.daysUntil <= 3) || null;
 
   // 1. Global overnight — keys are SP500, NASDAQ (uppercase)
   if (glData && glData.SP500) {
@@ -2715,6 +2937,19 @@ if (!IS_PROD) {
 // All routes require x-dalal-token header (already enforced above)
 // ══════════════════════════════════════════════════════════════
 
+// ── BROKER STATUS (always available — no feature flag) ───────
+app.get('/api/broker/status', (req, res) => {
+  res.json({
+    enabled:     FEATURE_DHAN_API,
+    broker:      'Dhan HQ',
+    configured:  FEATURE_DHAN_API && Boolean(DHAN_CLIENT_ID) && Boolean(DHAN_ACCESS_TOKEN),
+    message:     FEATURE_DHAN_API
+      ? (DHAN_CLIENT_ID && DHAN_ACCESS_TOKEN ? 'Dhan API is active' : 'Dhan API enabled but credentials missing')
+      : 'Set FEATURE_DHAN_API=true in .env to enable',
+    docs:       'https://dhanhq.co/docs/v2/',
+  });
+});
+
 if (FEATURE_DHAN_API) {
   // Validate credentials on startup
   if (!DHAN_CLIENT_ID || !DHAN_ACCESS_TOKEN) {
@@ -2774,7 +3009,7 @@ if (FEATURE_DHAN_API) {
       });
     } catch (e) {
       console.error('[DHAN] holdings error:', e.message);
-      res.status(e.message.includes('not configured') ? 503 : 500).json({ error: e.message, freshness: 'UNAVAILABLE' });
+      res.status(e.message.includes('not configured') ? 503 : 500).json(structuredEndpointError(e.message));
     }
   });
 
@@ -2792,7 +3027,7 @@ if (FEATURE_DHAN_API) {
       });
     } catch (e) {
       console.error('[DHAN] positions error:', e.message);
-      res.status(e.message.includes('not configured') ? 503 : 500).json({ error: e.message, freshness: 'UNAVAILABLE' });
+      res.status(e.message.includes('not configured') ? 503 : 500).json(structuredEndpointError(e.message));
     }
   });
 
@@ -2804,7 +3039,7 @@ if (FEATURE_DHAN_API) {
       const data = await dhanFetch('/v2/fundlimit');
       res.json({ data, freshness: 'LIVE', source: 'Dhan HQ API v2', ts: new Date().toISOString() });
     } catch (e) {
-      res.status(500).json({ error: e.message, freshness: 'UNAVAILABLE' });
+      res.status(500).json(structuredEndpointError(e.message));
     }
   });
 
@@ -2825,7 +3060,7 @@ if (FEATURE_DHAN_API) {
         ts:       new Date().toISOString(),
       });
     } catch (e) {
-      res.status(500).json({ error: e.message, freshness: 'UNAVAILABLE' });
+      res.status(500).json(structuredEndpointError(e.message));
     }
   });
 
@@ -2842,18 +3077,6 @@ if (FEATURE_DHAN_API) {
   });
 }
 
-// ── BROKER STATUS (always available — no feature flag) ───────
-app.get('/api/broker/status', (req, res) => {
-  res.json({
-    enabled:     FEATURE_DHAN_API,
-    broker:      'Dhan HQ',
-    configured:  FEATURE_DHAN_API && Boolean(DHAN_CLIENT_ID) && Boolean(DHAN_ACCESS_TOKEN),
-    message:     FEATURE_DHAN_API
-      ? (DHAN_CLIENT_ID && DHAN_ACCESS_TOKEN ? 'Dhan API is active' : 'Dhan API enabled but credentials missing')
-      : 'Set FEATURE_DHAN_API=true in .env to enable',
-    docs:       'https://dhanhq.co/docs/v2/',
-  });
-});
 
 // ── START ─────────────────────────────────────────────────────
 if (!IS_VERCEL) {

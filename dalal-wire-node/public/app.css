@@ -17,8 +17,8 @@
   --gold:      #e6b84a;
   --sop-accent:#ff6600;
 
-  --mono: 'IBM Plex Mono', monospace;
-  --sans: 'IBM Plex Mono', monospace;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', sans-serif;
 
   --tb-h: 44px;
   --ss-h: 28px;
@@ -95,14 +95,26 @@ body{display:flex;flex-direction:column}
   color:var(--green);
   background:rgba(0,204,102,0.05);
 }
-#dw-focus-toggle{
-  background:var(--bg1);
-  border-color:var(--orange-d);
-  color:var(--orange);
+#dw-focus-toggle {
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.15s;
 }
-#dw-focus-toggle.is-active{
-  background:var(--bg2);
-  border-color:var(--orange);
+#dw-focus-toggle:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+#dw-focus-toggle.is-active {
+  background: rgba(255,102,0,0.1);
+  border-color: var(--orange);
+  color: var(--orange);
 }
 
 .clk{color:#aaa;font-size:21px;font-variant-numeric:tabular-nums}
@@ -142,8 +154,8 @@ body{display:flex;flex-direction:column}
 
 /* ── LAYOUT ── */
 #body { display: grid; grid-template-columns: 360px 540px 1fr; flex: 1; min-height: 0; }
-#sidebar { border-right: 1px solid var(--line); overflow-y: auto; height: 100%; min-width: 0; max-width: 360px; padding-bottom: 12px; background: var(--bg); }
-#news-column { border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); height: 100%; min-height: 0; }
+#sidebar { border-right: 1px solid var(--line); overflow-y: auto; height: 100%; min-width: 0; max-width: 360px; padding-bottom: 12px; background: var(--bg); transition: width 0.25s ease, opacity 0.25s ease, max-width 0.25s ease; }
+#news-column { border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); height: 100%; min-height: 0; transition: width 0.25s ease, opacity 0.25s ease, max-width 0.25s ease; }
 #right-panel { display: flex; flex-direction: column; background: var(--bg); height: 100%; min-height: 0; }
 #headlines { flex: 1; overflow-y: auto; min-height: 0; }
 
@@ -329,91 +341,62 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 
 /* ── (STALE NEWS AREA DEFINITIONS REMOVED) ── */
 
-/* ── RIGHT PANEL TABS  (REPLACE the entire block in app.css) ── */
+/* ── RIGHT PANEL TABS — WRAP LAYOUT (all tabs visible) ── */
 #rp-tabs-container {
-  position: relative;
   display: flex;
   align-items: stretch;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 2px solid var(--line);
   background: var(--bg1);
   flex-shrink: 0;
   min-width: 0;
 }
 
-/* Left fade-edge when scrolled */
-#rp-tabs-container::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 24px;
-  background: linear-gradient(to right, var(--bg1), transparent);
-  pointer-events: none;
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-#rp-tabs-container.scrolled-left::before { opacity: 1; }
+/* No pseudo-element fade needed — no scroll */
+#rp-tabs-container::before { display: none; }
 
 #rp-tabs {
   display: flex;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line2) transparent;
+  flex-wrap: wrap;           /* KEY: wrap to second row instead of scroll */
   flex: 1;
   min-width: 0;
-  overscroll-behavior-x: contain; /* Prevents swipe navigation on Mac/mobile */
+  overflow: visible;         /* no overflow clipping */
 }
-#rp-tabs::-webkit-scrollbar { height: 4px; }
-#rp-tabs::-webkit-scrollbar-track { background: transparent; }
-#rp-tabs::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+/* No scrollbar needed */
+#rp-tabs::-webkit-scrollbar { display: none; }
 
 .rp-tab {
   flex: 0 0 auto;
-  padding: 12px 14px;
+  padding: 8px 11px;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   cursor: pointer;
   border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   white-space: nowrap;
-  transition: all 0.1s;
+  transition: color 0.1s, background 0.1s;
   text-transform: uppercase;
   user-select: none;
+  font-family: var(--mono);
 }
-.rp-tab:hover { color: var(--text); background: var(--bg2); }
+.rp-tab:hover {
+  color: var(--text);
+  background: var(--bg2);
+}
 .rp-tab.active-rp-tab {
   color: var(--orange);
   background: var(--bg);
-  box-shadow: inset 0 -2px 0 var(--orange);
+  border-bottom-color: var(--orange);
+  border-bottom-width: 2px;
+  margin-bottom: -1px; /* overlap the container border */
 }
 
-/* Arrow scroll button — ALWAYS rendered, visibility toggled via JS */
+/* Hide arrow — not needed with wrap layout */
 #rp-tabs-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 36px;
-  min-width: 36px;
-  background: linear-gradient(to right, transparent 0%, var(--bg1) 35%);
-  border: none;
-  border-left: none;
-  color: var(--orange);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0;
-  transition: color 0.12s, background 0.12s;
-  position: relative;
-  z-index: 3;
-  /* Always visible — remove the old .visible class show/hide */
-  opacity: 1;
+  display: none !important;
 }
-#rp-tabs-arrow:hover { color: var(--text); }
-/* Hide arrow only when there truly is no overflow */
-#rp-tabs-arrow.hidden { display: none; }
 
 
 
@@ -491,7 +474,10 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 .state-modal-name-block{display:flex;flex-direction:column;min-width:0}
 .state-modal-name{color:#f2e4be;font-size:14px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .state-modal-sub{color:#7f7969;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-.state-modal-weight{color:#d8ceab;font-size:13px}
+.state-modal-weight{color:#d8ceab;font-size:13px;line-height:1.3;text-align:right}
+.state-modal-live-chg{font-size:10px;font-weight:600;letter-spacing:.04em}
+.state-modal-live-chg.up{color:var(--good)}
+.state-modal-live-chg.dn{color:var(--bad)}
 .state-modal-bar{height:5px;border-radius:999px;background:rgba(255,255,255,.04);overflow:hidden}
 .state-modal-bar-fill{display:block;height:100%;border-radius:999px;background:rgba(255,255,255,.16)}
 .state-modal-bar-fill-skeleton{background:linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.16))}
@@ -582,7 +568,12 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 
 .nl-meta{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 .nl-time{color:var(--dim);font-size:10px;letter-spacing:0.06em;}
-.nl-hl{font-family:var(--sans);font-size:13px;line-height:1.5;color:var(--text);}
+.nl-hl {
+  font-family: var(--sans);     /* <- ADD THIS LINE */
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
 .nl.active .nl-hl{color:#fff}
 
 
@@ -612,8 +603,22 @@ body.edit-mode #add-idx-row,body.edit-mode #add-macro-row{display:flex;align-ite
 .db-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
 .db-tag{font-size:13px;padding:2px 9px;border:1px solid #1a1a2e;border-radius:2px;color:#555}
 .db-actions{display:flex;gap:8px;margin-bottom:14px}
-.db-headline{color:var(--text);font-size:17px;font-weight:bold;line-height:1.5;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:12px}
-.db-text{color:var(--muted);font-size:15px;line-height:2.1}
+.db-headline {
+  font-family: var(--sans);     /* <- ADD THIS LINE */
+  color: var(--text);
+  font-size: 17px;
+  font-weight: bold;
+  line-height: 1.5;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.db-text {
+  font-family: var(--sans);     /* <- ADD THIS LINE */
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 2.1;
+}
 .db-text p{margin-bottom:12px}
 .db-text ul{margin:0 0 12px 18px}
 .db-text li{margin-bottom:6px}
@@ -1254,10 +1259,10 @@ body.dalal-focus-mode #ticker-strip{max-height:0;opacity:0;transform:translateY(
 body.dalal-focus-mode #ticker-inner{animation-duration:72s}
 body.dalal-focus-mode .brand{animation:brandPulse 5.5s ease-in-out infinite}
 body.dalal-focus-mode .chip,body.dalal-focus-mode .rp-tab,body.dalal-focus-mode .idx-cell,body.dalal-focus-mode .mini-chart-card{animation:none !important}
-body.dalal-focus-mode #body{grid-template-columns:0 minmax(0,1fr)}
-body.dalal-focus-mode #sidebar{max-width:0;opacity:0;border-right-color:transparent;pointer-events:none}
-body.dalal-focus-mode #news-area{grid-template-columns:0 minmax(0,1fr)}
-body.dalal-focus-mode #headlines{max-width:0;opacity:0;border-right-color:transparent;pointer-events:none}
+body.dalal-focus-mode #body{grid-template-columns:0 0 1fr}
+body.dalal-focus-mode #sidebar{width:0;min-width:0;max-width:0;overflow:hidden;opacity:0;border-right-color:transparent;pointer-events:none;transition:all 0.25s ease}
+body.dalal-focus-mode #news-column{width:0;min-width:0;max-width:0;overflow:hidden;opacity:0;border-right-color:transparent;pointer-events:none;transition:all 0.25s ease}
+
 body.dalal-focus-mode #nav-widget{opacity:0;transform:translateY(12px);pointer-events:none}
 #nav-widget{transition:opacity var(--tMed) var(--ease2), transform var(--tMed) var(--ease2)}
 

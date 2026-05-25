@@ -265,12 +265,13 @@ function addIdx() {
   const val = input.value.trim().toUpperCase(); if (!val) return;
   const match = AVAILABLE_SYMBOLS.find(s => s.sym.toUpperCase() === val || s.sym.split(':')[0].toUpperCase() === val || s.label.toUpperCase() === val);
   const sym = match ? match.sym : (val.includes(':') ? val : val + ':NSE'); const label = match ? match.label : val.split(':')[0];
+  if (BLOCKED_LEFT_RAIL_SYMBOLS.has(sym)) { input.value = ''; return; }
   const id = 's-' + sym.split(':')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
   if (sidebarIndices.find(x => x.sym === sym)) { input.value = ''; return; }
   if (!DEFAULT_INDEX_SYMBOLS.has(sym)) {
     appState.userWatchlist = [...(appState.userWatchlist || []), { sym, label, valId: id, chgId: id + '-chg' }];
   }
-  sidebarIndices.push({ sym, label, valId: id, chgId: id + '-chg' }); input.value = ''; saveConfig(); renderSidebar(); fetchLivePrices();
+  sidebarIndices.push({ sym, label, valId: id, chgId: id + '-chg' }); input.value = ''; saveConfig(); renderSidebar(); fetchDashboardData();
 }
 function addMacro() {
   const key = document.getElementById('add-macro-key')?.value; if (!key) return;
@@ -285,26 +286,26 @@ const INDEX_VIEW_CONFIG = {
     code: 'LEVEL 1 · INDICES',
     note: 'Large-cap India benchmark. Use this as the primary market pulse.',
     constituents: [
-      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: 13.2, sector: 'Financials', pe: 18.4, industryPe: 16.9, debtToEquity: 6.8 },
-      { sym: 'RELIANCE:NSE', label: 'Reliance', weight: 9.1, sector: 'Energy', pe: 24.6, industryPe: 19.8, debtToEquity: 0.42 },
-      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: 8.2, sector: 'Financials', pe: 17.8, industryPe: 16.9, debtToEquity: 7.1 },
-      { sym: 'INFY:NSE', label: 'Infosys', weight: 6.1, sector: 'IT', pe: 29.5, industryPe: 27.2, debtToEquity: 0.09 },
-      { sym: 'TCS:NSE', label: 'TCS', weight: 4.8, sector: 'IT', pe: 31.4, industryPe: 27.2, debtToEquity: 0.12 },
-      { sym: 'SBIN:NSE', label: 'SBI', weight: 3.1, sector: 'Financials', pe: 10.4, industryPe: 16.9, debtToEquity: 12.6 },
-      { sym: 'BHARTIARTL:NSE', label: 'Bharti Airtel', weight: 4.3, sector: 'Telecom', pe: 62.7, industryPe: 38.1, debtToEquity: 1.86 },
-      { sym: 'LT:NSE', label: 'L&T', weight: 3.7, sector: 'Industrials', pe: 34.8, industryPe: 28.4, debtToEquity: 1.21 },
-      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: 3.2, sector: 'Financials', pe: 14.1, industryPe: 16.9, debtToEquity: 7.4 },
-      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: 2.9, sector: 'Financials', pe: 20.7, industryPe: 16.9, debtToEquity: 5.9 },
-      { sym: 'ITC:NSE', label: 'ITC', weight: 4.1, sector: 'FMCG', pe: 26.3, industryPe: 32.1, debtToEquity: 0 },
-      { sym: 'HINDUNILVR:NSE', label: 'HUL', weight: 2.8, sector: 'FMCG', pe: 54.2, industryPe: 32.1, debtToEquity: 0.03 },
-      { sym: 'BAJFINANCE:NSE', label: 'Bajaj Finance', weight: 2.4, sector: 'Financials', pe: 28.4, industryPe: 22.1, debtToEquity: 3.8 },
-      { sym: 'MARUTI:NSE', label: 'Maruti', weight: 1.6, sector: 'Auto', pe: 28.2, industryPe: 24.1, debtToEquity: 0.01 },
-      { sym: 'SUNPHARMA:NSE', label: 'Sun Pharma', weight: 1.4, sector: 'Pharma', pe: 32.1, industryPe: 28.4, debtToEquity: 0.02 },
-      { sym: 'ASIANPAINT:NSE', label: 'Asian Paints', weight: 1.6, sector: 'Consumer', pe: 64.2, industryPe: 42.1, debtToEquity: 0.12 },
-      { sym: 'TITAN:NSE', label: 'Titan', weight: 1.4, sector: 'Consumer', pe: 82.1, industryPe: 42.1, debtToEquity: 0.28 },
-      { sym: 'ADANIENT:NSE', label: 'Adani Ent', weight: 1.2, sector: 'Agglomerate', pe: 98.4, industryPe: 42.1, debtToEquity: 0.84 },
-      { sym: 'TATAMOTORS:NSE', label: 'Tata Motors', weight: 1.1, sector: 'Auto', pe: 11.2, industryPe: 24.1, debtToEquity: 1.12 },
-      { sym: 'TATASTEEL:NSE', label: 'Tata Steel', weight: 1.1, sector: 'Metals', pe: 14.8, industryPe: 12.1, debtToEquity: 0.94 }
+      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'RELIANCE:NSE', label: 'Reliance', weight: null, sector: 'Energy', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'INFY:NSE', label: 'Infosys', weight: null, sector: 'IT', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'TCS:NSE', label: 'TCS', weight: null, sector: 'IT', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'SBIN:NSE', label: 'SBI', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'BHARTIARTL:NSE', label: 'Bharti Airtel', weight: null, sector: 'Telecom', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'LT:NSE', label: 'L&T', weight: null, sector: 'Industrials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ITC:NSE', label: 'ITC', weight: null, sector: 'FMCG', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'HINDUNILVR:NSE', label: 'HUL', weight: null, sector: 'FMCG', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'BAJFINANCE:NSE', label: 'Bajaj Finance', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'MARUTI:NSE', label: 'Maruti', weight: null, sector: 'Auto', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'SUNPHARMA:NSE', label: 'Sun Pharma', weight: null, sector: 'Pharma', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ASIANPAINT:NSE', label: 'Asian Paints', weight: null, sector: 'Consumer', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'TITAN:NSE', label: 'Titan', weight: null, sector: 'Consumer', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ADANIENT:NSE', label: 'Adani Ent', weight: null, sector: 'Agglomerate', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'TATAMOTORS:NSE', label: 'Tata Motors', weight: null, sector: 'Auto', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'TATASTEEL:NSE', label: 'Tata Steel', weight: null, sector: 'Metals', pe: null, industryPe: null, debtToEquity: null }
     ]
   },
   'SENSEX:BSE': {
@@ -312,16 +313,16 @@ const INDEX_VIEW_CONFIG = {
     code: 'LEVEL 1 · INDICES',
     note: 'BSE large-cap basket with concentrated heavyweight representation.',
     constituents: [
-      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: 14.6, sector: 'Financials', pe: 18.4, industryPe: 16.9, debtToEquity: 6.8 },
-      { sym: 'RELIANCE:NSE', label: 'Reliance', weight: 11.3, sector: 'Energy', pe: 24.6, industryPe: 19.8, debtToEquity: 0.42 },
-      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: 8.9, sector: 'Financials', pe: 17.8, industryPe: 16.9, debtToEquity: 7.1 },
-      { sym: 'INFY:NSE', label: 'Infosys', weight: 7.9, sector: 'IT', pe: 29.5, industryPe: 27.2, debtToEquity: 0.09 },
-      { sym: 'TCS:NSE', label: 'TCS', weight: 5.5, sector: 'IT', pe: 31.4, industryPe: 27.2, debtToEquity: 0.12 },
-      { sym: 'SBIN:NSE', label: 'SBI', weight: 3.2, sector: 'Financials', pe: 10.4, industryPe: 16.9, debtToEquity: 12.6 },
-      { sym: 'LT:NSE', label: 'L&T', weight: 4.2, sector: 'Industrials', pe: 34.8, industryPe: 28.4, debtToEquity: 1.21 },
-      { sym: 'ITC:NSE', label: 'ITC', weight: 4.8, sector: 'FMCG', pe: 26.3, industryPe: 32.1, debtToEquity: 0 },
-      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: 3.8, sector: 'Financials', pe: 14.1, industryPe: 16.9, debtToEquity: 7.4 },
-      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: 3.4, sector: 'Financials', pe: 20.7, industryPe: 16.9, debtToEquity: 5.9 }
+      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'RELIANCE:NSE', label: 'Reliance', weight: null, sector: 'Energy', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'INFY:NSE', label: 'Infosys', weight: null, sector: 'IT', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'TCS:NSE', label: 'TCS', weight: null, sector: 'IT', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'SBIN:NSE', label: 'SBI', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'LT:NSE', label: 'L&T', weight: null, sector: 'Industrials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ITC:NSE', label: 'ITC', weight: null, sector: 'FMCG', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: null, sector: 'Financials', pe: null, industryPe: null, debtToEquity: null }
     ]
   },
   'BANKNIFTY:NSE': {
@@ -329,18 +330,18 @@ const INDEX_VIEW_CONFIG = {
     code: 'LEVEL 1 · INDICES',
     note: 'Concentrated banking benchmark. Track weights before reading sector momentum.',
     constituents: [
-      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: 29.1, sector: 'Private Bank', pe: 18.4, industryPe: 16.9, debtToEquity: 6.8 },
-      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: 24.2, sector: 'Private Bank', pe: 17.8, industryPe: 16.9, debtToEquity: 7.1 },
-      { sym: 'SBIN:NSE', label: 'SBI', weight: 11.2, sector: 'PSU Bank', pe: 10.4, industryPe: 16.9, debtToEquity: 12.6 },
-      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: 8.2, sector: 'Private Bank', pe: 20.7, industryPe: 16.9, debtToEquity: 5.9 },
-      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: 7.9, sector: 'Private Bank', pe: 14.1, industryPe: 16.9, debtToEquity: 7.4 },
-      { sym: 'INDUSINDBK:NSE', label: 'IndusInd Bank', weight: 4.1, sector: 'Private Bank', pe: 11.2, industryPe: 16.9, debtToEquity: 8.8 },
-      { sym: 'AUFIL:NSE', label: 'AU Small Fin', weight: 1.8, sector: 'SFB', pe: 32.4, industryPe: 16.9, debtToEquity: 6.2 },
-      { sym: 'IDFCFIRSTB:NSE', label: 'IDFC First', weight: 1.6, sector: 'Private Bank', pe: 18.2, industryPe: 16.9, debtToEquity: 7.4 },
-      { sym: 'FEDERALBNK:NSE', label: 'Federal Bank', weight: 2.1, sector: 'Private Bank', pe: 9.8, industryPe: 16.9, debtToEquity: 8.1 },
-      { sym: 'PNB:NSE', label: 'PNB', weight: 1.4, sector: 'PSU Bank', pe: 14.2, industryPe: 16.9, debtToEquity: 14.2 },
-      { sym: 'BANKBARODA:NSE', label: 'Bank of Baroda', weight: 1.8, sector: 'PSU Bank', pe: 7.1, industryPe: 16.9, debtToEquity: 13.8 },
-      { sym: 'BANDHANBNK:NSE', label: 'Bandhan Bank', weight: 1.1, sector: 'Private Bank', pe: 12.4, industryPe: 16.9, debtToEquity: 5.1 }
+      { sym: 'HDFCBANK:NSE', label: 'HDFC Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'ICICIBANK:NSE', label: 'ICICI Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'SBIN:NSE', label: 'SBI', weight: null, sector: 'PSU Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'KOTAKBANK:NSE', label: 'Kotak Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'AXISBANK:NSE', label: 'Axis Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'INDUSINDBK:NSE', label: 'IndusInd Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'AUFIL:NSE', label: 'AU Small Fin', weight: null, sector: 'SFB', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'IDFCFIRSTB:NSE', label: 'IDFC First', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'FEDERALBNK:NSE', label: 'Federal Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'PNB:NSE', label: 'PNB', weight: null, sector: 'PSU Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'BANKBARODA:NSE', label: 'Bank of Baroda', weight: null, sector: 'PSU Bank', pe: null, industryPe: null, debtToEquity: null },
+      { sym: 'BANDHANBNK:NSE', label: 'Bandhan Bank', weight: null, sector: 'Private Bank', pe: null, industryPe: null, debtToEquity: null }
     ]
   }
 };
@@ -452,7 +453,27 @@ function getExplorerModalHost() {
   return host;
 }
 function getQuoteForKey(sym) { return stockDetailCache[sym] || dashStore?.quotes?.[sym] || null; }
-function getConstituentRows(indexKey) { return (INDEX_VIEW_CONFIG[indexKey]?.constituents || []).slice().sort((a, b) => b.weight - a.weight); }
+function getConstituentRows(indexKey) {
+  const staticRows = (INDEX_VIEW_CONFIG[indexKey]?.constituents || []).slice();
+  const liveData = nseIndexLiveCache[indexKey];
+  if (liveData && Array.isArray(liveData.stocks)) {
+    const liveMap = new Map(liveData.stocks.map(s => [s.symbol, s]));
+    staticRows.forEach(row => {
+      const sym = row.sym.split(':')[0];
+      const live = liveMap.get(sym);
+      if (live) {
+        row._livePrice = live.price;
+        row._liveChange = live.change;
+        row._livePctChange = live.pctChange;
+        row._liveHigh = live.high;
+        row._liveLow = live.low;
+        row._liveVolume = live.volume;
+        row._live = true;
+      }
+    });
+  }
+  return staticRows.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+}
 function findStockMeta(sym) { return STOCK_STATIC_DATA[sym] || null; }
 function getStoryUniverse() { return Object.values(newsCache).filter(entry => entry && Array.isArray(entry.stories)).flatMap(entry => entry.stories).concat(Array.isArray(currentStories) ? currentStories : []); }
 
@@ -494,17 +515,30 @@ function getStateShellClass() {
   return `state-shell${pendingStateTransition ? ` state-shell-${pendingStateTransition}` : ''}`;
 }
 
+let nseIndexLiveCache = {};
+async function fetchNseIndexLiveData(indexKey) {
+  try {
+    const res = await fetch(`/api/nse/index/${encodeURIComponent(indexKey)}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    nseIndexLiveCache[indexKey] = data;
+  } catch (e) {
+    console.warn('NSE index live fetch failed for', indexKey, e.message);
+  }
+}
+
 function queueConstituentModalHydration(indexKey) {
   constituentsHydrationToken += 1;
   const token = constituentsHydrationToken;
   modalLoadState.constituentsReady = false;
-  setTimeout(() => {
+  // Fetch live NSE data in parallel, then render
+  fetchNseIndexLiveData(indexKey).finally(() => {
     if (token !== constituentsHydrationToken) return;
     if (!appState.selectedIndex || appState.selectedIndex !== indexKey) return;
     if (appState.view !== 'indexDetail' && appState.view !== 'stockDetail') return;
     modalLoadState.constituentsReady = true;
     renderApp();
-  }, 0);
+  });
 }
 
 function renderApp() {
@@ -598,15 +632,19 @@ function buildIndexModalMarkup() {
     ? (() => {
         const maxWeight = constituents.reduce((max, stock) => Math.max(max, Number(stock.weight) || 0), 0) || 1;
         return constituents.map((stock, idx) => {
-          const width = Math.max(8, Math.min(100, ((Number(stock.weight) || 0) / maxWeight) * 100));
+          const width = Number(stock.weight) ? Math.max(8, Math.min(100, (stock.weight / maxWeight) * 100)) : 8;
           const symbol = stock.sym.includes(':') ? stock.sym.split(':')[0] : stock.sym;
+          const weightLabel = Number(stock.weight) ? stock.weight.toFixed(1) + '%' : '--';
+          const livePrice = stock._live ? fmtPrice(stock._livePrice) : '';
+          const livePctCls = stock._live ? (stock._livePctChange >= 0 ? 'up' : 'dn') : '';
+          const livePctTxt = stock._live ? ((stock._livePctChange >= 0 ? '+' : '') + stock._livePctChange.toFixed(2) + '%') : '';
           return `<button class="state-modal-row" type="button" onclick="openStockDetail('${stock.sym}')">
             <span class="state-modal-rank">${idx + 1}</span>
             <span class="state-modal-name-block">
               <span class="state-modal-name">${escapeHtml(stock.label)}</span>
-              <span class="state-modal-sub">${escapeHtml(symbol)}</span>
+              <span class="state-modal-sub">${escapeHtml(symbol)}${livePrice ? ' · ₹' + livePrice : ''}</span>
             </span>
-            <span class="state-modal-weight">${stock.weight.toFixed(1)}%</span>
+            <span class="state-modal-weight">${weightLabel}${livePctTxt ? '<br><span class="state-modal-live-chg ' + livePctCls + '">' + livePctTxt + '</span>' : ''}</span>
             <span class="state-modal-bar" aria-hidden="true"><span class="state-modal-bar-fill" style="width:${width}%"></span></span>
           </button>`;
         }).join('');
@@ -703,10 +741,24 @@ async function fetchStockDetail(symbol) {
   renderApp();
   try {
     const ticker = symbol.includes(':') ? symbol.split(':')[0] : symbol;
+    const nsePromise = fetch(
+      `/api/nse/equity/${ticker}`,
+    ).then(r => r.ok ? r.json() : null).catch(() => null);
     const res = await fetch(`/api/quote/${encodeURIComponent(ticker)}`, { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (!data?.error) stockDetailCache[symbol] = { ...data, symbol };
+    const [nseData] = await Promise.all([nsePromise]);
+    if (!data?.error && nseData) {
+      stockDetailCache[symbol] = {
+        ...data,
+        ...nseData,
+        price: data.price,
+        symbol,
+        source: 'NSE + Yahoo',
+      };
+    } else if (!data?.error) {
+      stockDetailCache[symbol] = { ...data, symbol };
+    }
   } catch (e) {
     if (e.name !== 'AbortError') console.warn('Stock detail fetch failed:', e.message);
   } finally {
@@ -755,11 +807,28 @@ let fngLastFetch = 0;
 // ── CLOCK ──
 function tick() {
   document.getElementById('clk').textContent = new Date().toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST';
-  const h = parseInt(new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }));
-  const day = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' });
-  const open = day !== 'Sun' && day !== 'Sat' && h >= 9 && h < 16;
-  const el = document.getElementById('mkt-st'); el.textContent = open ? 'NSE OPEN' : 'NSE CLOSED'; el.className = open ? 'mkt-open' : 'mkt-closed';
 }
+
+// Poll NSE market status every 60s — runs independently of the clock tick
+async function pollMarketStatus() {
+  try {
+    const token = await getDalalToken();
+    const data  = await fetch('/api/market-status', {
+      headers: { 'x-dalal-token': token }
+    }).then(r => r.json());
+    const el = document.getElementById('mkt-st');
+    if (el && data.status && data.status !== 'UNKNOWN') {
+      const isOpen   = data.isOpen;
+      el.textContent = isOpen ? 'NSE OPEN' : 'NSE CLOSED';
+      el.className   = isOpen ? 'mkt-open'  : 'mkt-closed';
+    }
+  } catch { /* keep current DOM state on failure */ }
+}
+
+// Run once on boot, then every 60s
+pollMarketStatus();
+setInterval(pollMarketStatus, 60_000);
+
 tick(); setInterval(tick, 1000);
 
 // ── RIGHT PANEL — FIXED switchRP ──────────────────────────────
@@ -2090,7 +2159,7 @@ function processLivePrices(data) {
         }
       });
       if (key.startsWith('USD/INR')) { const e = document.getElementById('m-usdinr'); if (e) { e.textContent = raw.toFixed(2) + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } }
-      if (key.startsWith('XAU/USD')) { const usdInr = parseFloat(document.getElementById('m-usdinr')?.textContent) || 84; const goldInr = Math.round(raw * usdInr / 31.1035 * 10); const e = document.getElementById('m-gold'); if (e) { e.textContent = '₹' + goldInr.toLocaleString('en-IN') + '/10g'; e.className = 'mv'; } }
+      if (key.startsWith('XAU/USD')) { const usdInrLive = dashStore?.quotes?.['USD/INR:Forex']?.price; const usdInrDom = parseFloat(document.getElementById('m-usdinr')?.textContent); const usdInr = Number.isFinite(usdInrLive) ? usdInrLive : (Number.isFinite(usdInrDom) ? usdInrDom : null); const e = document.getElementById('m-gold'); if (e) { if (usdInr) { const goldInr = Math.round(raw * usdInr / 31.1035 * 10); e.textContent = '₹' + goldInr.toLocaleString('en-IN') + '/10g'; e.className = 'mv'; } else { e.textContent = '$' + raw.toFixed(2) + '/oz'; e.className = 'mv'; } } }
       if (key.startsWith('WTI')) { const e = document.getElementById('m-crude'); if (e) { e.textContent = '$' + raw.toFixed(2) + '/bbl' + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } }
       if (key.startsWith('IN10Y')) { const e = document.getElementById('m-gsec'); if (e) { e.textContent = raw.toFixed(3) + '%' + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } miniGsecSeries.push(raw); if (miniGsecSeries.length > 24) miniGsecSeries.shift(); }
     });
@@ -2564,20 +2633,19 @@ function startEventCountdownTick() {
   }, 60000);
 }
 
-// ── EARNINGS CALENDAR ──
-const EARNINGS = [
-  { date: '07 Apr', company: 'TCS', sym: 'TCS', est: 'Rev $7.1B', period: 'Q4 FY26', sector: 'IT' },
-  { date: '10 Apr', company: 'Infosys', sym: 'INFY', est: 'Rev $4.8B', period: 'Q4 FY26', sector: 'IT' },
-  { date: '14 Apr', company: 'HDFC Bank', sym: 'HDFCBANK', est: 'NII ₹31,400Cr', period: 'Q4 FY26', sector: 'BANK' },
-  { date: '15 Apr', company: 'ICICI Bank', sym: 'ICICIBANK', est: 'NII ₹21,600Cr', period: 'Q4 FY26', sector: 'BANK' },
-  { date: '19 Apr', company: 'Reliance Industries', sym: 'RELIANCE', est: 'EBITDA ₹47,000Cr', period: 'Q4 FY26', sector: 'ENERGY' },
-  { date: '25 Apr', company: 'SBI', sym: 'SBIN', est: 'NII ₹42,000Cr', period: 'Q4 FY26', sector: 'BANK' },
-  { date: '28 Apr', company: 'Tata Motors', sym: 'TATAMOTORS', est: 'Rev ₹1,22,000Cr', period: 'Q4 FY26', sector: 'AUTO' },
-  { date: '05 May', company: 'Sun Pharma', sym: 'SUNPHARMA', est: 'Rev ₹14,200Cr', period: 'Q4 FY26', sector: 'PHARMA' },
-];
+// ── EARNINGS CALENDAR ── (static data removed — was stale Q4 FY26)
+const EARNINGS = [];
 
 function renderEarnings() {
   const el = document.getElementById('earnings-content'); if (!el) return;
+  if (!EARNINGS.length) {
+    el.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">
+      <div style="font-size:22px;margin-bottom:8px;opacity:0.4">📅</div>
+      <div style="font-size:12px;letter-spacing:0.5px">No upcoming earnings data available.</div>
+      <div style="font-size:10px;margin-top:6px;color:var(--dim)">Earnings calendar will populate when live data is sourced.</div>
+    </div>`;
+    return;
+  }
   const grouped = {}; EARNINGS.forEach(e => { if (!grouped[e.date]) grouped[e.date] = []; grouped[e.date].push(e); });
   const today = new Date(); let html = '';
   Object.entries(grouped).forEach(([date, items]) => {

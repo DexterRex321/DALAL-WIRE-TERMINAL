@@ -6,13 +6,12 @@
 <title>Dalal Wire Terminal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
-
 </head>
 <body>
 <div id="boot-splash" class="boot-splash">
-  <div class="boot-logo">Bridge Dalal Wire</div>
+  <div class="boot-logo">Dalal Wire</div>
   <div class="boot-meta">System Initialization . . .</div>
 </div>
 <style>
@@ -25,7 +24,7 @@
   <div id="topbar">
     <span class="brand">DALAL<span> WIRE TERMINAL</span></span>
     <div class="topright">
-      <button id="dw-focus-toggle" type="button" onclick="toggleDalalFocusMode()">TERMINAL FOCUS</button>
+      <button id="dw-focus-toggle" type="button" onclick="toggleDalalFocusMode()">FOCUS</button>
       <span class="top-meta-pill top-meta-pill-live">LIVE</span>
       <span id="last-updated" class="top-meta-pill">LOADING...</span>
       <button id="terminal-refresh-btn" class="top-secondary-btn" type="button" onclick="manualRefresh()">REFRESH</button>
@@ -131,21 +130,21 @@
     </div>
 
     <div id="right-panel">
+      <!-- ── TAB BAR: all tabs visible via flex-wrap ── -->
       <div id="rp-tabs-container">
         <div id="rp-tabs">
-          <span class="rp-tab active-rp-tab" data-rp="detail" onclick="switchRP('detail')">STORY</span>
-          <span class="rp-tab" data-rp="advice" onclick="switchRP('advice')">ADVICE</span>
-          <span class="rp-tab" data-rp="global" onclick="switchRP('global')">GLOBAL</span>
-          <span class="rp-tab" data-rp="heatmap" onclick="switchRP('heatmap')">HEATMAP</span>
-          <span class="rp-tab" data-rp="mf" onclick="switchRP('mf')">MF/ETF</span>
-          <span class="rp-tab" data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
-          <span class="rp-tab" data-rp="lockin" onclick="switchRP('lockin')">LOCK-IN</span>
-          <span class="rp-tab" data-rp="feargreed" onclick="switchRP('feargreed')">SENTIMENT</span>
-          <span class="rp-tab" data-rp="sop" onclick="switchRP('sop')">SOP</span>
-          <span class="rp-tab" data-rp="compare" onclick="switchRP('compare')">COMPARE</span>
-          <span class="rp-tab" data-rp="events" onclick="switchRP('events')">EVENTS</span>
+          <span class="rp-tab active-rp-tab" data-rp="detail"      onclick="switchRP('detail')">STORY</span>
+          <span class="rp-tab"               data-rp="advice"      onclick="switchRP('advice')">ADVICE</span>
+          <span class="rp-tab"               data-rp="global"      onclick="switchRP('global')">GLOBAL</span>
+          <span class="rp-tab"               data-rp="heatmap"     onclick="switchRP('heatmap')">HEATMAP</span>
+          <span class="rp-tab"               data-rp="mf"          onclick="switchRP('mf')">MF/ETF</span>
+          <span class="rp-tab"               data-rp="commodities" onclick="switchRP('commodities')">CMDTY</span>
+          <span class="rp-tab"               data-rp="lockin"      onclick="switchRP('lockin')">LOCK-IN</span>
+          <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTI</span>
+          <span class="rp-tab"               data-rp="sop"         onclick="switchRP('sop')">SOP</span>
+          <span class="rp-tab"               data-rp="compare"     onclick="switchRP('compare')">COMPARE</span>
+          <span class="rp-tab"               data-rp="events"      onclick="switchRP('events')">EVENTS</span>
         </div>
-        <button id="rp-tabs-arrow" aria-label="Scroll tabs right" onclick="scrollTabsRight()">›</button>
       </div>
 
       <div id="rp-ticker-row">
@@ -194,17 +193,12 @@
               <div style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px">GLOBAL MARKETS — LIVE SNAPSHOT</div>
               <div style="display:flex;align-items:center;gap:10px">
                 <span id="gl-updated" style="color:#444;font-size:18px">--</span>
-                <button onclick="forceGlobal()" style="background:#1a0a00;border:1px solid #ff6600;color:#ff6600;font-family:'Courier New',monospace;font-size:18px;padding:4px 12px;cursor:pointer;border-radius:3px">REFRESH</button>
+                <button onclick="forceGlobal()" style="background:#1a0a00;border:1px solid #ff6600;color:#ff6600;font-family:var(--mono);font-size:18px;padding:4px 12px;cursor:pointer;border-radius:3px">REFRESH</button>
               </div>
             </div>
             <div id="gl-content">
               <div style="color:#444;font-size:17px;text-align:center;padding:40px">Click REFRESH or switch to this tab to load live global data</div>
             </div>
-          </div>
-
-          <div id="story-earnings-section" style="display:none" hidden>
-            <div style="color:#ff6600;font-size:17px;font-weight:bold;letter-spacing:1.5px;margin-bottom:14px">EARNINGS CALENDAR — Q4 FY26</div>
-            <div id="earnings-content"></div>
           </div>
 
           <div id="rp-heatmap" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
@@ -213,21 +207,21 @@
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                 <input id="hm-q" type="text" placeholder="Filter (e.g. banks, IT, RELIANCE)"
                   oninput="renderHeatmap()"
-                  style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:6px 10px;border-radius:3px;outline:none;width:250px" />
-                <select id="hm-set" onchange="onHeatmapSetChange()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                  style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:var(--mono);font-size:13px;padding:6px 10px;border-radius:3px;outline:none;width:250px" />
+                <select id="hm-set" onchange="onHeatmapSetChange()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:var(--mono);font-size:13px;padding:4px 8px;border-radius:3px">
                   <option value="nifty">Universe: Nifty 50</option>
                   <option value="indices">Universe: India + Global Indices</option>
                 </select>
-                <select id="hm-sort" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                <select id="hm-sort" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:var(--mono);font-size:13px;padding:4px 8px;border-radius:3px">
                   <option value="mcap">Sort: Market Cap</option>
                   <option value="pct">Sort: % Change</option>
                   <option value="sym">Sort: Symbol</option>
                 </select>
-                <select id="hm-group" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:'Courier New',monospace;font-size:13px;padding:4px 8px;border-radius:3px">
+                <select id="hm-group" onchange="renderHeatmap()" style="background:#0d0d18;border:1px solid #333;color:#d4c9a8;font-family:var(--mono);font-size:13px;padding:4px 8px;border-radius:3px">
                   <option value="sector">Group by Sector</option>
                   <option value="none">By Market Cap</option>
                 </select>
-                <button onclick="forceHeatmap()" style="background:#0a1a0d;border:1px solid #4CAF82;color:#4CAF82;font-family:'Courier New',monospace;font-size:13px;padding:4px 12px;cursor:pointer;border-radius:3px">↻</button>
+                <button onclick="forceHeatmap()" style="background:#0a1a0d;border:1px solid #4CAF82;color:#4CAF82;font-family:var(--mono);font-size:13px;padding:4px 12px;cursor:pointer;border-radius:3px">↻</button>
               </div>
             </div>
             <div class="hm-legend-row">
@@ -242,8 +236,6 @@
           </div>
 
           <div id="rp-mf" style="display:none;overflow-y:auto;flex:1;padding:14px 16px">
-
-            <!-- Header row -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
               <div style="color:#8B7FD4;font-size:16px;font-weight:bold;letter-spacing:1.5px">MF / ETF SCREENER</div>
               <div style="display:flex;gap:8px;align-items:center">
@@ -251,26 +243,18 @@
                 <button onclick="forceMF()" class="sc-btn">↻ REFRESH</button>
               </div>
             </div>
-
-            <!-- Tab row -->
             <div style="display:flex;gap:6px;margin-bottom:12px">
               <span id="mftab-mf"  onclick="switchMFTab('mf')"  class="sc-vbtn sc-vbtn-on">MUTUAL FUNDS</span>
               <span id="mftab-etf" onclick="switchMFTab('etf')" class="sc-vbtn">ETFs</span>
             </div>
-
-            <!-- Search + sort bar -->
             <div class="sc-bar">
               <input id="mf-q" class="sc-search" type="text" placeholder="Search — HDFC, Tata, Flexi, Bluechip, SBI..." autocomplete="off"
                 oninput="onMFSearch(this.value)" />
               <select id="mf-sort" class="sc-sel" onchange="renderMF()">
                 <option value="amc">Sort: AMC</option>
                 <option value="ret1y">Sort: 1Y Return</option>
-                <option value="ret3y">Sort: 3Y Return</option>
-                <option value="ret5y">Sort: 5Y Return</option>
                 <option value="aum">Sort: AUM</option>
-                <option value="er">Sort: Expense Ratio</option>
                 <option value="nav">Sort: NAV</option>
-                <option value="label">Sort: Name</option>
               </select>
               <select id="mf-cat" class="sc-sel" onchange="renderMF()">
                 <option value="">All Categories</option>
@@ -282,25 +266,15 @@
                 <option value="Index">Index</option>
                 <option value="Debt">Debt</option>
                 <option value="Hybrid">Hybrid</option>
-                <option value="FoF">Fund of Funds</option>
               </select>
               <div style="display:flex;gap:4px">
                 <button id="mf-vcard" onclick="setMFView('card')" class="sc-vbtn sc-vbtn-on" title="Card view">▦</button>
                 <button id="mf-vlist" onclick="setMFView('list')" class="sc-vbtn" title="List view">☰</button>
               </div>
             </div>
-
-            <!-- AMC filter chips -->
             <div class="sc-chips" id="mf-amc-chips"></div>
-
-            <!-- Count row -->
-            <div class="sc-view-row">
-              <span id="mf-count" class="sc-count">—</span>
-            </div>
-
-            <!-- Content -->
+            <div class="sc-view-row"><span id="mf-count" class="sc-count">—</span></div>
             <div id="mf-content"><div style="color:#444;text-align:center;padding:40px;font-size:13px">Loading screener data...</div></div>
-
           </div>
 
           <div id="rp-commodities" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
@@ -308,7 +282,6 @@
               <div style="display:flex;align-items:center;gap:10px">
                 <div class="mcx-title">MCX COMMODITIES</div>
                 <span class="mcx-badge">INDIA</span>
-                <span class="mcx-badge" style="border-color:rgba(0,204,102,.3);color:#3a8a5a;background:rgba(0,204,102,.06)">LIVE</span>
               </div>
               <div style="display:flex;gap:8px;align-items:center">
                 <span id="mcx-last-upd" style="color:#3a3226;font-size:10px;letter-spacing:.4px">--</span>
@@ -324,9 +297,10 @@
             </div>
             <div id="lockin-content"></div>
           </div>
+
           <div id="rp-feargreed" style="display:none;overflow-y:auto;flex:1;min-height:0;scrollbar-gutter:stable;overscroll-behavior:contain">
-  <div style="padding:20px;text-align:center;color:#444;font-size:13px">Loading sentiment data...</div>
-</div>
+            <div style="padding:20px;text-align:center;color:#444;font-size:13px">Loading sentiment data...</div>
+          </div>
 
           <div id="rp-sop" style="display:none">
             <div id="sop-profile-display">
@@ -397,9 +371,7 @@
 
           <div id="rp-events">
             <div id="events-impact-banner"></div>
-            <div id="events-filter-row">
-              <!-- category filter chips -->
-            </div>
+            <div id="events-filter-row"></div>
             <div id="events-list"></div>
           </div>
 
@@ -411,34 +383,11 @@
     <span>NSE &bull; BSE &bull; Yahoo Finance</span>
     <span id="sb-q">INDIA MARKET</span>
     <span id="sb-refresh" style="color:#444;cursor:pointer" onclick="manualRefresh()" title="Click to refresh now">REFRESH IN 30s</span>
-    <span style="margin-left:auto;cursor:pointer;color:#333" onclick="toggleHelp()" title="Keyboard shortcuts">? SHORTCUTS</span>
+    <span style="margin-left:auto;cursor:pointer;color:#333" onclick="toggleHelp()" title="Keyboard shortcuts">? HELP</span>
   </div>
 </div>
-<!-- FLOATING NAV WIDGET -->
-<div id="nav-widget" style="position:fixed;bottom:20px;left:20px;z-index:9999;font-family:var(--mono)">
-  <div id="nav-pill" onclick="document.getElementById('nav-panel').classList.toggle('open')" style="cursor:pointer;background:var(--bg2);border:1px solid var(--orange-d);border-radius:2px;padding:6px 12px;font-size:10px;letter-spacing:.12em;color:var(--orange);display:flex;align-items:center;gap:8px;transition:none;box-shadow:none">
-    <span style="display:inline-block;width:6px;height:6px;border-radius:0;background:var(--orange)"></span>APP SWITCHER
-  </div>
 
-  <div id="nav-panel" style="display:none;position:absolute;bottom:calc(100% + 4px);left:0;background:var(--bg2);border:1px solid var(--line2);border-radius:2px;overflow:hidden;min-width:220px;box-shadow:none">
-    <a href="/" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--muted);font-size:10px;letter-spacing:.12em;border-bottom:1px solid var(--line);transition:none">
-      <span style="font-size:14px">⬡</span>BRIDGE
-    </a>
-    <a href="/terminal" style="display:flex;align-items:center;gap:10px;padding:12px 16px;text-decoration:none;color:var(--orange);font-size:10px;letter-spacing:.12em;border-bottom:1px solid var(--line);background:rgba(255,102,0,.04)">
-      <span style="font-size:14px">◈</span>DALAL WIRE <span style="margin-left:auto;color:var(--dim);font-size:9px">● HERE</span>
-    </a>
-  </div>
-
-</div>
-<style>
-  #nav-pill:hover{border-color:var(--muted);color:var(--text)}
-  #nav-panel.open{display:block!important;}
-  #nav-panel a:hover{background:rgba(255,255,255,.03)}
-</style>
-
-<script>document.addEventListener('click',e=>{const p=document.getElementById('nav-panel'),w=document.getElementById('nav-widget');if(p&&!w.contains(e.target))p.classList.remove('open')})</script>
-
+<script>document.addEventListener('click',e=>{const p=document.getElementById('nav-panel'),w=document.getElementById('nav-widget');if(p&&w&&!w.contains(e.target))p.classList.remove('open')})</script>
 <script src="/app.js?v=20260512-unfreeze"></script>
-
 </body>
 </html>
