@@ -258,6 +258,15 @@ const TTL = {
   COMPARE:       30_000,    // 30s — comparison panels
 };
 
+function getNewsTTL() {
+  const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();
+  const t = h * 100 + m;
+  if (day >= 1 && day <= 5 && t >= 915 && t <= 1530) return 60_000;   // market hours
+  if (day >= 1 && day <= 5 && t >= 800 && t <  915)  return 90_000;   // pre-market
+  return 5 * 60_000;                                                    // off-hours
+}
+
 // ── REQUEST BATCHING STATE ────────────────────────────────────
 let indicesFastCache = null;
 let indicesFastLastUpdated = 0;
@@ -444,6 +453,104 @@ function mapQuote(key, q) {
   };
 }
 
+const NSE_INDEX_QUOTE_NAMES = {
+  'NIFTY:NSE': 'NIFTY 50',
+  'BANKNIFTY:NSE': 'NIFTY BANK',
+};
+
+let nseIndexQuotesInFlight = null;
+async function getNseIndexQuoteMap() {
+  const cacheKey = 'nse_index_quote_map';
+  if (isFresh(cacheKey, TTL.INDICES_FAST)) return getCache(cacheKey).data;
+  if (nseIndexQuotesInFlight) return nseIndexQuotesInFlight;
+  nseIndexQuotesInFlight = (async () => {
+    try {
+      const raw = await fetchNse('/api/allIndices');
+      const rows = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
+      const byName = new Map(rows.map(row => [String(row.index || row.indexName || '').toUpperCase(), row]));
+      const out = {};
+      for (const [key, name] of Object.entries(NSE_INDEX_QUOTE_NAMES)) {
+        const row = byName.get(name);
+        if (!row) continue;
+        const price = toFiniteNumber(row.last, row.lastPrice, row.close);
+        if (!price) continue;
+        out[key] = {
+          symbol: key,
+          close: price,
+          price,
+          change: toFiniteNumber(row.variation, row.change) ?? 0,
+          percent_change: toFiniteNumber(row.percentChange, row.pChange) ?? 0,
+          open: toFiniteNumber(row.open) ?? 0,
+          high: toFiniteNumber(row.high) ?? 0,
+          low: toFiniteNumber(row.low) ?? 0,
+          volume: toFiniteNumber(row.totalTradedVolume, row.volume) ?? 0,
+          name,
+          stale: false,
+          source: 'NSE India',
+          freshness: 'LIVE',
+          asOf: row.timeVal || row.timestamp || null,
+        };
+      }
+      setCache(cacheKey, out);
+      return out;
+    } finally {
+      nseIndexQuotesInFlight = null;
+    }
+  })();
+  return nseIndexQuotesInFlight;
+}
+
+async function getNseEquityQuote(key) {
+  const symbol = String(key || '').split(':')[0].replace('.NS', '').toUpperCase();
+  if (!symbol || !key.endsWith(':NSE') || NSE_INDEX_QUOTE_NAMES[key]) return null;
+  const cacheKey = `nse_live_quote_${symbol}`;
+  if (isFresh(cacheKey, TTL.QUOTE)) return getCache(cacheKey).data;
+  const raw = await fetchNse(`/api/quote-equity?symbol=${encodeURIComponent(symbol)}`);
+  const price = raw?.priceInfo || {};
+  const info = raw?.info || {};
+  const last = toFiniteNumber(price.lastPrice);
+  if (!last) return null;
+  const out = {
+    symbol: key,
+    close: last,
+    price: last,
+    change: toFiniteNumber(price.change) ?? 0,
+    percent_change: toFiniteNumber(price.pChange) ?? 0,
+    open: toFiniteNumber(price.open) ?? 0,
+    high: toFiniteNumber(price.intraDayHighLow?.max) ?? 0,
+    low: toFiniteNumber(price.intraDayHighLow?.min) ?? 0,
+    volume: toFiniteNumber(price.totalTradedVolume) ?? 0,
+    marketCap: null,
+    week52High: toFiniteNumber(price.weekHighLow?.max) ?? 0,
+    week52Low: toFiniteNumber(price.weekHighLow?.min) ?? 0,
+    name: info.companyName || symbol,
+    stale: false,
+    source: 'NSE India',
+    freshness: 'LIVE',
+    asOf: raw?.metadata?.lastUpdateTime || null,
+  };
+  setCache(cacheKey, out);
+  return out;
+}
+
+async function getGsecQuote(ttlMs = TTL.QUOTE) {
+  for (const sym of [SYMBOLS['IN10Y:Bond'], '^TNX']) {
+    try {
+      const q = await cachedYahooQuote(sym, ttlMs);
+      const out = mapQuote('IN10Y:Bond', q);
+      if (Number(out.price) > 0) {
+        return {
+          ...out,
+          proxy: sym === '^TNX',
+          freshness: sym === '^TNX' ? 'PROXY (US 10Y)' : 'DELAYED 15m',
+          source: sym === '^TNX' ? 'Yahoo Finance (US 10Y proxy)' : 'Yahoo Finance',
+        };
+      }
+    } catch { /**/ }
+  }
+  return null;
+}
+
 function markStale(obj) {
   const out = {};
   for (const k of Object.keys(obj)) out[k] = { ...obj[k], stale: true, freshness: 'FALLBACK' };
@@ -455,14 +562,22 @@ function markStale(obj) {
 // Frontend relies safely on CORS Origin / Referer validation.
 
 // ── PAGE ROUTES ───────────────────────────────────────────────
-app.get('/',          (req, res) => res.sendFile(DALAL_INDEX_FILE));
-app.get('/terminal',  (req, res) => res.sendFile(DALAL_INDEX_FILE));
+function sendNoStoreFile(res, filePath, type) {
+  if (type) res.type(type);
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.sendFile(filePath);
+}
+
+app.get('/',          (req, res) => sendNoStoreFile(res, DALAL_INDEX_FILE));
+app.get('/terminal',  (req, res) => sendNoStoreFile(res, DALAL_INDEX_FILE));
 
 // Static assets (no auth needed)
-app.get('/app.js',              (req, res) => res.type('application/javascript').sendFile(DALAL_APP_FILE));
-app.get('/app.css',             (req, res) => res.type('text/css').sendFile(DALAL_STYLES_FILE));
-app.get('/bridge-app.js',       (req, res) => res.type('application/javascript').sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge-app.js')));
-app.get('/bridge-styles.css',   (req, res) => res.type('text/css').sendFile(path.join(DALAL_PUBLIC_DIR, 'bridge-styles.css')));
+app.get('/app.js',              (req, res) => sendNoStoreFile(res, DALAL_APP_FILE, 'application/javascript'));
+app.get('/app.css',             (req, res) => sendNoStoreFile(res, DALAL_STYLES_FILE, 'text/css'));
+app.get('/bridge-app.js',       (req, res) => sendNoStoreFile(res, path.join(DALAL_PUBLIC_DIR, 'bridge-app.js'), 'application/javascript'));
+app.get('/bridge-styles.css',   (req, res) => sendNoStoreFile(res, path.join(DALAL_PUBLIC_DIR, 'bridge-styles.css'), 'text/css'));
 
 
 // ══════════════════════════════════════════════════════════════
@@ -474,12 +589,18 @@ app.get('/bridge-styles.css',   (req, res) => res.type('text/css').sendFile(path
 async function getDashboardQuotesData() {
   if (isFresh('quotes', TTL.QUOTE)) return getCache('quotes').data;
   const keys = Object.keys(SYMBOLS);
-  const results = await Promise.allSettled(keys.map(k => cachedYahooQuote(SYMBOLS[k])));
+  const nseIndexQuotes = await getNseIndexQuoteMap().catch(() => ({}));
+  const results = await Promise.allSettled(keys.map(async (key) => {
+    if (nseIndexQuotes[key]) return nseIndexQuotes[key];
+    const nseEquity = await getNseEquityQuote(key).catch(() => null);
+    if (nseEquity) return nseEquity;
+    return mapQuote(key, await cachedYahooQuote(SYMBOLS[key]));
+  }));
   const output = {};
   keys.forEach((key, i) => {
     const r = results[i];
     if (r.status === 'fulfilled' && r.value) {
-      output[key] = mapQuote(key, r.value);
+      output[key] = r.value;
       if (key === 'NIFTY:NSE')     pushSeriesPoint(microHistory.nifty,  output[key].price);
       if (key === 'USD/INR:Forex') pushSeriesPoint(microHistory.usdinr, output[key].price);
       if (key === 'WTI:Commodity') pushSeriesPoint(microHistory.crude,  output[key].price);
@@ -489,15 +610,12 @@ async function getDashboardQuotesData() {
       if (stale) output[key] = { ...stale, stale: true, freshness: 'FALLBACK' };
     }
   });
-  // Fallback G-Sec if primary fails
-  if (!output['IN10Y:Bond']) {
-    for (const sym of ['^IN10YT=RR', '^TNX']) {
-      try {
-        const qb = await cachedYahooQuote(sym);
-        output['IN10Y:Bond'] = { ...mapQuote('IN10Y:Bond', qb), proxy: sym === '^TNX', freshness: sym === '^TNX' ? 'PROXY (US 10Y)' : 'DELAYED 15m' };
-        pushSeriesPoint(microHistory.gsec, output['IN10Y:Bond'].price);
-        break;
-      } catch { /**/ }
+  // Fallback G-Sec if primary fails or returns an empty quote.
+  if (!output['IN10Y:Bond'] || !(Number(output['IN10Y:Bond'].price) > 0)) {
+    const gsec = await getGsecQuote();
+    if (gsec) {
+      output['IN10Y:Bond'] = gsec;
+      pushSeriesPoint(microHistory.gsec, output['IN10Y:Bond'].price);
     }
   }
   setCache('quotes', output);
@@ -525,8 +643,9 @@ app.get('/api/quote/:symbol', async (req, res) => {
   try {
     const yahooSym = SYMBOLS[`${sym}:NSE`] || SYMBOLS[sym]
       || (sym.includes('.') || sym.startsWith('^') ? sym : `${sym}.NS`);
-    const q   = await cachedYahooQuote(yahooSym);
-    const out = mapQuote(sym, q);
+    const nseKey = `${sym}:NSE`;
+    const out = await getNseEquityQuote(nseKey).catch(() => null)
+      || mapQuote(sym, await cachedYahooQuote(yahooSym));
     setCache(key, out);
     res.json(out);
   } catch (e) {
@@ -669,10 +788,21 @@ app.get('/api/india-vix', async (req, res) => {
 // ── NSE FII / DII ─────────────────────────────────────────────
 let nseSessionCookie = '';
 let nseSessionTs = 0;
+const NSE_FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = NSE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function getNseCookie() {
   if (nseSessionCookie && (Date.now() - nseSessionTs) < 10 * 60_000) return nseSessionCookie;
-  const r = await fetch('https://www.nseindia.com', {
+  const r = await fetchWithTimeout('https://www.nseindia.com', {
     headers: {
       'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9',
@@ -688,7 +818,7 @@ async function fetchNse(path) {
   const key = `nse_${path}`;
   if (isFresh(key, TTL.FIIDII)) return getCache(key).data;
   const cookie = await getNseCookie();
-  const r = await fetch(`https://www.nseindia.com${path}`, {
+  const r = await fetchWithTimeout(`https://www.nseindia.com${path}`, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
       'Accept':     'application/json, text/plain, */*',
@@ -702,9 +832,29 @@ async function fetchNse(path) {
   return data;
 }
 
+let fiiDiiBlockedUntil = 0;
 async function getFiiDiiData() {
   if (isFresh('fiidii', TTL.FIIDII)) return getCache('fiidii').data;
-  const raw       = await fetchNse('/api/fiidiiTradeReact');
+  if (Date.now() < fiiDiiBlockedUntil) {
+    const stale = getCache('fiidii')?.data;
+    if (stale) return { ...stale, stale: true, freshness: 'FALLBACK' };
+    return {
+      fii: [],
+      dii: [],
+      today: { fii_buy: 0, fii_sell: 0, fii_net: 0, dii_buy: 0, dii_sell: 0, dii_net: 0, date: '' },
+      status: buildStatus('UNAVAILABLE', 'NSE FII/DII', { reason: 'NSE cooldown after blocked request' }),
+      fetchedAt: new Date().toISOString(),
+      stale: true,
+    };
+  }
+  let raw;
+  try {
+    raw = await fetchNse('/api/fiidiiTradeReact');
+  } catch(nseErr) {
+    fiiDiiBlockedUntil = Date.now() + 5 * 60_000;
+    console.error('[NSE_BLOCKED] fiidii fetch failed:', nseErr.message);
+    throw nseErr;
+  }
   const fetchedAt = new Date().toISOString();
   const result    = { fii: [], dii: [], fetchedAt };
 
@@ -1389,9 +1539,11 @@ app.get('/api/micro-series', async (req, res) => {
       fetchSeries('^IN10YT=RR', 24),
       getIndiaVixQuote(),
     ]);
+    const gsecQuote = gsecSeries.length ? null : await getGsecQuote();
+    const gsecFallbackSeries = gsecQuote?.price ? [gsecQuote.price] : microHistory.gsec.slice(-24);
     const out = {
       vix:  vixSeries.length  ? vixSeries  : microHistory.vix.slice(-24),
-      gsec: gsecSeries.length ? gsecSeries : microHistory.gsec.slice(-24),
+      gsec: gsecSeries.length ? gsecSeries : gsecFallbackSeries,
       meta: {
         vix:  indiaVix?.stale
           ? buildStatus('FALLBACK', 'NSE India VIX cache')
@@ -1400,7 +1552,7 @@ app.get('/api/micro-series', async (req, res) => {
       },
       spot: {
         vix:  indiaVix?.price ?? null,
-        gsec: gsecSeries.length ? gsecSeries[gsecSeries.length - 1] : null,
+        gsec: gsecSeries.length ? gsecSeries[gsecSeries.length - 1] : (gsecQuote?.price ?? null),
       },
       ts: new Date().toISOString(),
     };
@@ -1462,6 +1614,25 @@ app.get('/api/market-status', async (req, res) => {
   res.json(await getNseMarketStatus());
 });
 
+app.get('/api/health/nse', async (req, res) => {
+  const start = Date.now();
+  try {
+    await fetchNse('/api/marketStatus');
+    res.json({
+      status: 'ok',
+      latency_ms: Date.now() - start,
+      ts: new Date().toISOString()
+    });
+  } catch(e) {
+    res.json({
+      status: 'degraded',
+      error: e.message,
+      latency_ms: Date.now() - start,
+      ts: new Date().toISOString()
+    });
+  }
+});
+
 // ── FAST INDICES (10s TTL — dashboard primary load) ───────────
 const FAST_INDEX_SYMBOLS = {
   'NIFTY:NSE':     SYMBOLS['NIFTY:NSE'],
@@ -1477,12 +1648,15 @@ async function getIndicesFastData() {
   indicesFastInFlight = (async () => {
     try {
       const keys    = Object.keys(FAST_INDEX_SYMBOLS);
-      const results = await Promise.allSettled(keys.map(k => cachedYahooQuote(FAST_INDEX_SYMBOLS[k])));
+      const nseIndexQuotes = await getNseIndexQuoteMap().catch(() => ({}));
+      const results = await Promise.allSettled(keys.map(async (key) => (
+        nseIndexQuotes[key] || mapQuote(key, await cachedYahooQuote(FAST_INDEX_SYMBOLS[key]))
+      )));
       const indices = {};
       keys.forEach((key, i) => {
         const r = results[i];
         if (r.status === 'fulfilled' && r.value) {
-          indices[key] = mapQuote(key, r.value);
+          indices[key] = r.value;
         } else {
           const stale = indicesFastCache?.indices?.[key];
           if (stale) indices[key] = { ...stale, stale: true, freshness: 'FALLBACK' };
@@ -1715,9 +1889,10 @@ async function getDashboardSlowData() {
         'IN10Y:Bond':    SYMBOLS['IN10Y:Bond'],
       };
       const qKeys = Object.keys(slowQuoteMap);
+      const nseIndexQuotes = await getNseIndexQuoteMap().catch(() => ({}));
 
       const [qResults, globalRes, fiiDiiRes, vixDailyRes, gsecDailyRes, indiaVixRes, sentimentRes] = await Promise.all([
-        Promise.allSettled(qKeys.map(k => cachedYahooQuote(slowQuoteMap[k]))),
+        Promise.allSettled(qKeys.map(async (key) => nseIndexQuotes[key] || mapQuote(key, await cachedYahooQuote(slowQuoteMap[key])))),
         getGlobalData().catch(() => getCache('global')?.data || {}),
         getFiiDiiData().catch(() => getCache('fiidii')?.data || {}),
         getIndiaVixSeries(24).catch(() => []),
@@ -1729,8 +1904,12 @@ async function getDashboardSlowData() {
       const quotes = {};
       qKeys.forEach((key, i) => {
         const r = qResults[i];
-        if (r.status === 'fulfilled' && r.value) quotes[key] = mapQuote(key, r.value);
+        if (r.status === 'fulfilled' && r.value) quotes[key] = r.value;
       });
+      if (!quotes['IN10Y:Bond'] || !(Number(quotes['IN10Y:Bond'].price) > 0)) {
+        const gsec = await getGsecQuote();
+        if (gsec) quotes['IN10Y:Bond'] = gsec;
+      }
 
       const global       = globalRes  || {};
       const fiiDii       = fiiDiiRes  || {};
@@ -2106,6 +2285,12 @@ const RSS_SOURCES = [
   { name: 'Zee Business',      url: 'https://zeenews.india.com/rss/business.xml',                          cat: ['market', 'stocks'] },
   { name: 'NDTV Profit',       url: 'https://feeds.feedburner.com/ndtvprofit-latest',                      cat: ['market', 'stocks'] },
   { name: 'Hindu BizLine',     url: 'https://www.thehindubusinessline.com/markets/stocks/?service=rss',    cat: ['stocks'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=nifty+sensex+india+stock+market&hl=en-IN&gl=IN&ceid=IN:en', cat: ['market'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=RBI+bank+nifty+HDFC+ICICI+SBI&hl=en-IN&gl=IN&ceid=IN:en', cat: ['banks'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=nifty+IT+auto+pharma+sector&hl=en-IN&gl=IN&ceid=IN:en', cat: ['sectors'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=india+inflation+rupee+dollar+FII+DII&hl=en-IN&gl=IN&ceid=IN:en', cat: ['macro'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=india+quarterly+results+earnings+dividend&hl=en-IN&gl=IN&ceid=IN:en', cat: ['stocks'] },
+  { name: 'Google News', url: 'https://news.google.com/rss/search?q=fed+rate+nasdaq+crude+oil+india&hl=en-IN&gl=IN&ceid=IN:en', cat: ['global'] },
 ];
 
 const CAT_KEYWORDS = {
@@ -2133,6 +2318,25 @@ function scoreRelevance(text, cat) {
 
 function parseRssDate(str) { if (!str) return new Date(0); try { return new Date(str); } catch { return new Date(0); } }
 
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+function cleanRssText(value) {
+  return decodeHtmlEntities(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractRssItems(xml, sourceName) {
   const items     = [];
   const itemBlocks = xml.match(/<item[\s\S]*?<\/item>/g) || [];
@@ -2141,10 +2345,21 @@ function extractRssItems(xml, sourceName) {
       const m = block.match(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>|<${tag}[^>]*>([^<]*)<\\/${tag}>`));
       return m ? (m[1] || m[2] || '').trim() : '';
     };
-    const title = get('title'); const description = get('description');
+    const rawTitle = get('title'); const description = cleanRssText(get('description')).slice(0, 420);
     const link    = get('link') || block.match(/<link>([^<]+)<\/link>/)?.[1] || '';
     const pubDate = get('pubDate') || get('dc:date') || '';
-    if (title && title.length > 15) items.push({ title, description: description.replace(/<[^>]+>/g, '').slice(0, 300), link, pubDate, source: sourceName });
+    let title = cleanRssText(rawTitle);
+    let source = sourceName;
+    let via = '';
+    if (sourceName === 'Google News') {
+      const m = title.match(/\s+-\s+([^-]{2,80})$/);
+      if (m) {
+        source = m[1].trim();
+        title = title.slice(0, m.index).trim();
+        via = 'Google News';
+      }
+    }
+    if (title && title.length > 15) items.push({ title, description, link, pubDate, source, via });
   });
   return items;
 }
@@ -2308,6 +2523,8 @@ async function fetchCategoryNews(cat) {
 
   let processed = allItems.map(item => {
     const parsedTs = parseRssDate(item.pubDate).getTime();
+    const ageMs = Date.now() - parseRssDate(item.pubDate).getTime();
+    const isBreaking = ageMs < 15 * 60 * 1000;
     const ageHours = (Date.now() - parsedTs) / (1000 * 60 * 60);
     const entities = extractEntities(item.title + ' ' + item.description);
     const baseScore = scoreRelevance(item.title + ' ' + item.description, cat);
@@ -2331,6 +2548,7 @@ async function fetchCategoryNews(cat) {
       sourceRank: getSourceRank(item.source),
       baseScore,
       enrichedScore: baseScore + scoreAdd,
+      isBreaking,
       entities,
       tags: entities.slice(0, 4).map(e => e.label),
     };
@@ -2400,15 +2618,27 @@ async function fetchCategoryNews(cat) {
     headline:  item.title,
     body:      item.description || '',
     source:    item.source,
+    via:       item.via || '',
     url:       item.link,
     sentiment: sentimentFromText(item.title + ' ' + item.description),
     tags:      item.tags,
     entities:  item.entities,
-    enrichedScore: item.enrichedScore,
+    isBreaking: item.isBreaking,
+    enrichedScore: item.enrichedScore + (item.isBreaking ? 10 : 0),
     sourceRank: item.sourceRank,
     pubDate:   item.pubDate,
     freshness: 'RSS',
   }));
+}
+
+async function warmAllNewsCategories() {
+  console.log('[WARM] Refreshing news category caches');
+  for (const cat of ['market', 'banks', 'sectors', 'macro', 'stocks', 'global']) {
+    fetchCategoryNews(cat)
+      .then(stories => setCache(`news_${cat}`, stories))
+      .catch(() => {});
+    await new Promise(r => setTimeout(r, 800));
+  }
 }
 
 app.get('/api/news/:category', async (req, res) => {
@@ -2416,7 +2646,7 @@ app.get('/api/news/:category', async (req, res) => {
   const cat   = req.params.category.toLowerCase();
   const key   = `news_${cat}`;
   const force = req.query.force === '1';
-  if (!force && isFresh(key, TTL.NEWS)) {
+  if (!force && isFresh(key, getNewsTTL())) {
     res.setHeader('X-Cache', 'HIT');
     return res.json(getCache(key).data);
   }
@@ -3096,6 +3326,25 @@ if (!IS_VERCEL) {
   ╚══════════════════════════════════════════════════════╝
     `);
 
+    setTimeout(async () => {
+      console.log('[BOOT] Pre-warming caches...');
+      await Promise.allSettled([
+        getIndicesFastData(),
+        getDashboardSlowData(),
+        getGlobalData(),
+        warmAllNewsCategories(),
+        getFiiDiiData(),
+      ]);
+      console.log('[BOOT] Cache warm complete');
+    }, 5_000);
+
+    setTimeout(warmAllNewsCategories, 30_000);
+    setInterval(() => {
+      const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();
+      const t = h * 100 + m;
+      if (day >= 1 && day <= 5 && t >= 830 && t <= 1600) warmAllNewsCategories();
+    }, 90_000);
   });
 }
 

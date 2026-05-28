@@ -6,7 +6,7 @@
 <title>Dalal Wire Terminal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -134,14 +134,14 @@
       <div id="rp-tabs-container">
         <div id="rp-tabs">
           <span class="rp-tab active-rp-tab" data-rp="detail"      onclick="switchRP('detail')">STORY</span>
+          <span class="rp-tab"               data-rp="sop"         onclick="switchRP('sop')">MY BRIEF</span>
           <span class="rp-tab"               data-rp="advice"      onclick="switchRP('advice')">ADVICE</span>
           <span class="rp-tab"               data-rp="global"      onclick="switchRP('global')">GLOBAL</span>
           <span class="rp-tab"               data-rp="heatmap"     onclick="switchRP('heatmap')">HEATMAP</span>
-          <span class="rp-tab"               data-rp="mf"          onclick="switchRP('mf')">MF/ETF</span>
-          <span class="rp-tab"               data-rp="commodities" onclick="switchRP('commodities')">CMDTY</span>
-          <span class="rp-tab"               data-rp="lockin"      onclick="switchRP('lockin')">LOCK-IN</span>
-          <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTI</span>
-          <span class="rp-tab"               data-rp="sop"         onclick="switchRP('sop')">SOP</span>
+          <span class="rp-tab"               data-rp="mf"          onclick="switchRP('mf')">FUNDS & ETF</span>
+          <span class="rp-tab"               data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
+          <span class="rp-tab"               data-rp="lockin"      onclick="switchRP('lockin')">LOCK-IN EXPIRY</span>
+          <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTIMENT</span>
           <span class="rp-tab"               data-rp="compare"     onclick="switchRP('compare')">COMPARE</span>
           <span class="rp-tab"               data-rp="events"      onclick="switchRP('events')">EVENTS</span>
         </div>
@@ -380,6 +380,7 @@
 
   <div id="statusbar">
     <span><span class="dot-g"></span>LIVE</span>
+    <span id="sb-breadth" aria-live="polite" style="color:var(--dim)">· ▲ — · ▼ —</span>
     <span>NSE &bull; BSE &bull; Yahoo Finance</span>
     <span id="sb-q">INDIA MARKET</span>
     <span id="sb-refresh" style="color:#444;cursor:pointer" onclick="manualRefresh()" title="Click to refresh now">REFRESH IN 30s</span>

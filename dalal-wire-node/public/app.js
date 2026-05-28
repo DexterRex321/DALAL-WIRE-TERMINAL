@@ -15,37 +15,38 @@ async function getDalalToken() {
   return dTokenFetching;
 }
 
-const originalFetch = window.fetch;
-window.fetch = async function (...args) {
-  const url = args[0];
-  const isApi = typeof url === 'string' && url.includes('/api/') && !url.includes('/api/auth/session');
-  
-  if (isApi) {
-    const token = await getDalalToken();
-    const options = args[1] || {};
-    options.headers = { ...(options.headers || {}), 'x-dalal-token': token };
-    args[1] = options;
+async function apiFetch(url, options = {}, timeoutMs = 12000) {
+  const token = await getDalalToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: { ...(options.headers || {}), 'x-dalal-token': token }
+    });
+    if (res.status === 401) {
+      dToken = null;
+      const newToken = await getDalalToken();
+      return fetch(url, {
+        ...options,
+        headers: { ...(options.headers || {}), 'x-dalal-token': newToken }
+      });
+    }
+    return res;
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out');
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-  
-  let result = await originalFetch.apply(window, args);
-  
-  if (isApi && result.status === 401) {
-    dToken = null;
-    const newToken = await getDalalToken();
-    const options = args[1] || {};
-    options.headers = { ...(options.headers || {}), 'x-dalal-token': newToken };
-    args[1] = options;
-    result = await originalFetch.apply(window, args);
-  }
-  
-  return result;
-};
+}
 
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await apiFetch(url, { ...options, signal: controller.signal });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
@@ -169,6 +170,8 @@ function renderSidebarIndices() {
   const el = document.getElementById('idx-list'); el.innerHTML = '';
   sidebarIndices.forEach((item, i) => {
     const d = document.createElement('div'); d.className = 'idx-cell'; d.draggable = editMode; d.dataset.i = i; d.dataset.section = 'idx';
+    const isPrimary = ['NIFTY:NSE', 'SENSEX:BSE', 'BANKNIFTY:NSE'].includes(item.sym);
+    if (isPrimary) d.classList.add('idx-cell-primary');
     const action = getSidebarViewAction(item.sym);
     if (action && !editMode) { d.classList.add('idx-cell-nav'); d.setAttribute('role', 'button'); d.tabIndex = 0; d.setAttribute('onclick', action); d.setAttribute('onkeydown', `if(event.key==='Enter'||event.key===' '){event.preventDefault();${action};}`); }
     d.innerHTML = `<span class="edit-drag">⠿</span><div class="idx-name">${item.label}</div><div class="idx-val" id="${item.valId}">--</div><div class="idx-chg" id="${item.chgId}">--</div><div class="week52-bar" id="w52-${item.valId}" style="display:none;margin-top:5px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#444;margin-bottom:2px"><span id="w52l-${item.valId}"></span><span style="color:#666">52W</span><span id="w52h-${item.valId}"></span></div><div style="height:3px;background:#1a1a2e;border-radius:2px;position:relative"><div id="w52p-${item.valId}" style="position:absolute;top:-2px;width:7px;height:7px;background:#ff6600;border-radius:50%;transform:translateX(-50%)"></div></div></div><span class="edit-del" onclick="event.stopPropagation();removeIdx(${i})">✕</span>`;
@@ -409,6 +412,7 @@ let sectionLoadState = { indices: 'loading', news: 'idle', slow: 'idle', sentime
 const stockDetailCache = {};
 const stockDetailInFlight = {};
 const stockDetailControllers = {};
+let nseEquityBlockedUntil = 0;
 let modalLoadState = { constituentsReady: false };
 let constituentsHydrationToken = 0;
 let newsRequestController = null;
@@ -442,6 +446,22 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (match) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match]));
 }
 
+function decodeHtmlEntities(value) {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = String(value ?? '');
+  return textarea.value;
+}
+
+function cleanNewsText(value) {
+  return decodeHtmlEntities(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\b(?:href|target|rel)=["'][^"']*["']/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getExplorerRoot() { return document.getElementById('state-view-root'); }
 function getExplorerModalHost() {
   let host = document.getElementById('state-modal-host');
@@ -472,6 +492,18 @@ function getConstituentRows(indexKey) {
       }
     });
   }
+  staticRows.forEach(row => {
+    const q = getQuoteForKey(row.sym);
+    const price = Number(q?.price ?? q?.close ?? q?.cmp);
+    if (!Number.isFinite(price) || price <= 0) return;
+    row._livePrice = price;
+    row._liveChange = Number(q?.change ?? 0);
+    row._livePctChange = Number(q?.percent_change ?? q?.pctChange ?? 0);
+    row._liveHigh = Number(q?.high ?? 0);
+    row._liveLow = Number(q?.low ?? 0);
+    row._liveVolume = Number(q?.volume ?? 0);
+    row._live = true;
+  });
   return staticRows.sort((a, b) => (b.weight || 0) - (a.weight || 0));
 }
 function findStockMeta(sym) { return STOCK_STATIC_DATA[sym] || null; }
@@ -516,13 +548,16 @@ function getStateShellClass() {
 }
 
 let nseIndexLiveCache = {};
+let nseIndexBlockedUntil = 0;
 async function fetchNseIndexLiveData(indexKey) {
+  if (Date.now() < nseIndexBlockedUntil) return;
   try {
-    const res = await fetch(`/api/nse/index/${encodeURIComponent(indexKey)}`);
+    const res = await apiFetch(`/api/nse/index/${encodeURIComponent(indexKey)}`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     nseIndexLiveCache[indexKey] = data;
   } catch (e) {
+    nseIndexBlockedUntil = Date.now() + 5 * 60_000;
     console.warn('NSE index live fetch failed for', indexKey, e.message);
   }
 }
@@ -531,6 +566,7 @@ function queueConstituentModalHydration(indexKey) {
   constituentsHydrationToken += 1;
   const token = constituentsHydrationToken;
   modalLoadState.constituentsReady = false;
+  fetchQuotesData();
   // Fetch live NSE data in parallel, then render
   fetchNseIndexLiveData(indexKey).finally(() => {
     if (token !== constituentsHydrationToken) return;
@@ -587,7 +623,12 @@ function renderPulse() {
         <div class="pulse-loading">Loading global feeds...</div>
       </div>
       <div class="pulse-footer">
-        Select a news story for deep-dive analysis or use the tabs above for specialized data modules.
+        ${sopState.data
+          ? '<span style="color:var(--muted);font-size:11px;">' +
+            (sopState.data.nifty?.percent_change >= 0 ? '▲' : '▼') +
+            ' <b style="color:var(--text)">' + (sopState.profile?.name || 'ADAPTIVE') + '</b>' +
+            ' brief ready — open <span style="color:var(--orange)">MY BRIEF</span> tab</span>'
+          : 'Select a news story for deep-dive analysis or use the tabs above.'}
       </div>
     </div>
   `;
@@ -741,10 +782,15 @@ async function fetchStockDetail(symbol) {
   renderApp();
   try {
     const ticker = symbol.includes(':') ? symbol.split(':')[0] : symbol;
-    const nsePromise = fetch(
-      `/api/nse/equity/${ticker}`,
-    ).then(r => r.ok ? r.json() : null).catch(() => null);
-    const res = await fetch(`/api/quote/${encodeURIComponent(ticker)}`, { signal: controller.signal });
+    const nsePromise = Date.now() < nseEquityBlockedUntil
+      ? Promise.resolve(null)
+      : apiFetch(`/api/nse/equity/${ticker}`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+        .catch(() => {
+          nseEquityBlockedUntil = Date.now() + 5 * 60_000;
+          return null;
+        });
+    const res = await apiFetch(`/api/quote/${encodeURIComponent(ticker)}`, { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     const [nseData] = await Promise.all([nsePromise]);
@@ -813,7 +859,7 @@ function tick() {
 async function pollMarketStatus() {
   try {
     const token = await getDalalToken();
-    const data  = await fetch('/api/market-status', {
+    const data  = await apiFetch('/api/market-status', {
       headers: { 'x-dalal-token': token }
     }).then(r => r.json());
     const el = document.getElementById('mkt-st');
@@ -916,7 +962,7 @@ async function fetchGlobal() {
   if (globalFetching) return;
   globalFetching = true;
   try {
-    const data = await fetch('/api/global').then(r => r.json());
+    const data = await apiFetch('/api/global').then(r => r.json());
     globalData = data;
     renderGlobal(globalData);
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
@@ -949,7 +995,7 @@ async function updateAdviceForTicker(t) {
   const badge = document.getElementById('adv-stance-badge');
   const text = document.getElementById('adv-stance-text');
   try {
-    const res = await fetch(`/api/advice/${encodeURIComponent(key)}`);
+    const res = await apiFetch(`/api/advice/${encodeURIComponent(key)}`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
     const cls = d?.cls || 'neutral'; const stance = d?.stance || 'NEUTRAL'; const m = d?.metrics || {};
@@ -1047,7 +1093,7 @@ async function fetchFearGreed() {
   sectionLoadState.sentiment = 'loading';
   renderSentimentLoading();
   try {
-    const data = await fetch('/api/sentiment').then(r => r.json());
+    const data = await apiFetch('/api/sentiment').then(r => r.json());
     fngData = data;
     fngLastFetch = Date.now();
     sectionLoadState.sentiment = 'ready';
@@ -1171,18 +1217,19 @@ function renderHeadlines(resetScroll = false) {
   currentStories.forEach((s, i) => {
     const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '') + (s.watchlistMatch ? ' watchlist-match' : '');
     const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : '';
-    const srcStr = s.source ? `<span class="nl-src">${s.source}</span>` : '';
+    const srcStr = s.source ? `<span class="nl-src">${escapeHtml(s.source)}</span>` : '';
     
     let wlBadge = s.watchlistMatch ? `<span class="nl-watchlist-badge">★ WATCHLIST</span>` : '';
     
     let entitiesHtml = '';
     if (s.entities && s.entities.some(e => e.type === 'stock')) {
       entitiesHtml = `<div class="nl-entities">` + 
-        s.entities.map(e => `<span class="nl-entity-tag type-${e.type}">${e.label}</span>`).join('') + 
+        s.entities.map(e => `<span class="nl-entity-tag type-${escapeHtml(e.type)}">${escapeHtml(e.label)}</span>`).join('') + 
         `</div>`;
     }
     
-    d.innerHTML = `<div class="nl-meta">${tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${timeStr}</span></div><div class="nl-hl">${s.headline}</div>${entitiesHtml}${srcStr}`;
+    const breaking = '<span class="ntag" style="background:#1a0000;color:#ff3333;border:1px solid #330000;animation:blink-dim 1.5s infinite">BREAKING</span>';
+    d.innerHTML = `<div class="nl-meta">${s.isBreaking ? breaking : tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${escapeHtml(timeStr)}</span></div><div class="nl-hl">${escapeHtml(cleanNewsText(s.headline))}</div>${entitiesHtml}${srcStr}`;
     d.addEventListener('click', () => showDetail(i)); list.appendChild(d);
   });
   animateCollection('#hl-list .nl', { x: -10, y: 10, stagger: 0.035, duration: 0.32 });
@@ -1198,13 +1245,14 @@ function showDetail(i) {
   if (!emptyEl || !bodyEl || !srcEl || !tagsEl || !headEl || !textEl) return;
   if (stateRoot) stateRoot.style.display = 'none';
   emptyEl.style.display = 'none'; bodyEl.style.display = 'block';
-  srcEl.textContent = s.source || 'NEWSFEED'; tagsEl.innerHTML = (s.tags || []).map(t => `<span class="db-tag">${t}</span>`).join(' ') + ' ' + tagHtml(s.sentiment);
-  headEl.textContent = s.headline;
-  const body = (s.body || '').trim();
+  srcEl.textContent = s.via ? `${s.source || 'NEWSFEED'} via ${s.via}` : (s.source || 'NEWSFEED'); tagsEl.innerHTML = (s.tags || []).map(t => `<span class="db-tag">${escapeHtml(t)}</span>`).join(' ') + ' ' + tagHtml(s.sentiment);
+  headEl.textContent = cleanNewsText(s.headline);
+  const body = cleanNewsText(s.body || '');
   const summary = body ? body.split(/[.!?]+/).map(x => x.trim()).filter(Boolean).slice(0, 2).join('. ') + '.' : 'Summary unavailable.';
-  let bodyHtml = `<p><b>Summary:</b> ${summary}</p>`;
-  bodyHtml += (s.body || '').split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('');
-  if (s.url) bodyHtml += `<p><a href="${s.url}" style="color:#ff6600;font-size:13px;" target="_blank">Read full article ↗</a></p>`;
+  let bodyHtml = `<p class="db-summary"><b>Summary:</b> ${escapeHtml(summary)}</p>`;
+  bodyHtml += body.split(/(?<=[.!?])\s+/).map(p => p.trim()).filter(Boolean).slice(2, 6).map(p => `<p>${escapeHtml(p)}</p>`).join('');
+  if (s.via) bodyHtml += `<p class="db-source-note">Aggregated by ${escapeHtml(s.via)}. Open the source link for the original publisher page.</p>`;
+  if (s.url) bodyHtml += `<p><a href="${escapeHtml(s.url)}" class="db-read-link" target="_blank" rel="noopener">Read full article</a></p>`;
   textEl.innerHTML = bodyHtml;
   switchRP('detail');
 }
@@ -1236,7 +1284,7 @@ async function fetchLiveNews(cat, useCache = true) {
   showNewsLoading();
   try {
     const url = useCache ? `/api/news/${cat}` : `/api/news/${cat}?force=1`;
-    const res = await fetch(url, { signal: controller.signal }); if (!res.ok) throw new Error('API ' + res.status);
+    const res = await apiFetch(url, { signal: controller.signal }); if (!res.ok) throw new Error('API ' + res.status);
     const stories = await res.json(); if (stories.error) throw new Error(stories.error);
     if (token !== newsRequestToken) return;
     currentStories = Array.isArray(stories) ? stories : [];
@@ -1260,7 +1308,7 @@ async function fetchLiveNews(cat, useCache = true) {
   }
 }
 
-function refreshNews() { clearTimeout(refreshNewsTimer); refreshNewsTimer = setTimeout(async () => { newsCache[currentCat] = null; try { await fetch('/api/news-refresh'); } catch (e) { } fetchLiveNews(currentCat, false); }, 120); }
+function refreshNews() { clearTimeout(refreshNewsTimer); refreshNewsTimer = setTimeout(async () => { newsCache[currentCat] = null; try { await apiFetch('/api/news-refresh'); } catch (e) { } fetchLiveNews(currentCat, false); }, 120); }
 
 function showNewsLoading() {
   sectionLoadState.news = 'loading';
@@ -1291,9 +1339,27 @@ document.getElementById('q-input').addEventListener('keydown', e => { if (e.key 
 // ── MINI SPARKLINES ──
 function drawMiniSparkline(canvasId, series, line, fill) {
   const c = document.getElementById(canvasId); if (!c || !Array.isArray(series) || !series.length) return;
-  const src = series.length === 1 ? [series[0], series[0]] : series;
+  const src = series.map(Number).filter(Number.isFinite);
+  if (!src.length) return;
   c.width = c.parentElement.clientWidth - 12; c.height = 48;
   const ctx = c.getContext('2d'); const w = c.width, h = c.height; ctx.clearRect(0, 0, w, h);
+  const unique = new Set(src.map(v => v.toFixed(4))).size;
+  if (src.length < 3 || unique < 2) {
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h - 10);
+    ctx.lineTo(w, h - 10);
+    ctx.stroke();
+    ctx.fillStyle = line;
+    ctx.beginPath();
+    ctx.arc(w - 12, h - 10, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(160,160,170,.8)';
+    ctx.font = '10px monospace';
+    ctx.fillText('spot only', 2, 14);
+    return;
+  }
   const min = Math.min(...src), max = Math.max(...src), rng = (max - min) || 1;
   const pts = src.map((v, i) => ({ x: (i / (src.length - 1)) * w, y: h - 6 - ((v - min) / rng) * (h - 12) }));
   ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
@@ -1971,6 +2037,7 @@ async function fetchSOPData() {
     sopState.lastFetch = Date.now();
     computeDeltas();
     renderSOP();
+    if (currentRP === 'detail') renderPulse();
     if (!sopDeltaState.history || Date.now() - (sopDeltaState.lastFetch || 0) > 60_000) {
       sopDeltaState.lastFetch = Date.now();
       fetchSOPHistory();
@@ -2115,6 +2182,12 @@ function renderBreadthBar(advances, declines) {
   const total = advances + declines || 1; const advPct = (advances / total * 100).toFixed(0); const decPct = (declines / total * 100).toFixed(0);
   bar.innerHTML = `<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;letter-spacing:.5px;margin-bottom:4px"><span>ADV <span style="color:#00cc66">${advances}</span></span><span style="font-size:8px;color:#333">MARKET BREADTH</span><span>DEC <span style="color:#ff4444">${declines}</span></span></div><div style="display:flex;height:4px;border-radius:999px;overflow:hidden;background:#0a0a18;gap:1px"><div id="breadth-adv" style="height:100%;border-radius:999px 0 0 999px;background:linear-gradient(to right,#004d1a,#00cc66);width:0%;transition:width 1s cubic-bezier(.2,.9,.2,1)"></div><div id="breadth-dec" style="height:100%;border-radius:0 999px 999px 0;background:linear-gradient(to left,#4d0000,#ff4444);width:0%;transition:width 1s cubic-bezier(.2,.9,.2,1)"></div></div>`;
   requestAnimationFrame(() => { setTimeout(() => { const a = document.getElementById('breadth-adv'); const d = document.getElementById('breadth-dec'); if (a) a.style.width = advPct + '%'; if (d) d.style.width = decPct + '%'; }, 300); });
+  const sbBreadth = document.getElementById('sb-breadth');
+  if (sbBreadth && Number.isFinite(advances) && Number.isFinite(declines)) {
+    sbBreadth.innerHTML =
+      '· <span style="color:var(--green)">▲ ' + advances + '</span>' +
+      ' · <span style="color:var(--red)">▼ ' + declines + '</span>';
+  }
 }
 
 const TICKER_MAP = {
@@ -2128,10 +2201,21 @@ const TICKER_MAP = {
   'XAU/USD:Forex': { tkVal: 'tk-gold', tkChg: 'tk-gold-chg' }, 'WTI:Commodity': { tkVal: 'tk-crude', tkChg: 'tk-crude-chg' },
 };
 
-function flashCell(valId, dir) { const cell = document.getElementById(valId)?.closest('.idx-cell'); if (!cell) return; cell.classList.remove('flash-up', 'flash-dn'); void cell.offsetWidth; cell.classList.add(dir === 'up' ? 'flash-up' : 'flash-dn'); }
+function flashCell(valId, dir) {
+  const el = document.getElementById(valId);
+  if (!el) return;
+  el.classList.remove('flash-up', 'flash-dn');
+  void el.offsetWidth;
+  el.classList.add(dir === 'up' ? 'flash-up' : 'flash-dn');
+  setTimeout(() => el.classList.remove('flash-up', 'flash-dn'), 500);
+}
 function fmtPrice(v) { const n = parseFloat(v); if (isNaN(n)) return '--'; return n >= 1000 ? n.toLocaleString('en-IN', { maximumFractionDigits: 1 }) : n.toFixed(2); }
 function fmtChg(c, p) { const cv = parseFloat(c), pv = parseFloat(p); if (isNaN(cv)) return { txt: '--', cls: 'flat' }; const s = cv >= 0 ? '+' : ''; return { txt: `${s}${cv.toFixed(1)} (${s}${pv.toFixed(2)}%)`, cls: cv >= 0 ? 'up' : 'dn' }; }
 function setEl(id, txt) { const e = document.getElementById(id); if (e) { e.textContent = txt; e.classList.add('has-data'); } }
+function markStaleElement(id, isStale) {
+  const e = document.getElementById(id);
+  if (e) e.classList.toggle('is-stale', Boolean(isStale));
+}
 
 function processLivePrices(data) {
   if (!data) return;
@@ -2140,20 +2224,23 @@ function processLivePrices(data) {
       const d = data[key]; if (!d) return;
       const price = fmtPrice(d.close || d.price); const { txt, cls } = fmtChg(d.change, d.percent_change);
       const raw = parseFloat(d.close || d.price); const chgRaw = parseFloat(d.change || 0);
+      const isStale = Boolean(d.stale) || String(d.freshness || '').toUpperCase().includes('FALLBACK');
       const tm = TICKER_MAP[key];
       if (tm) {
         setEl(tm.tkVal, price);
+        markStaleElement(tm.tkVal, isStale);
         const te = document.getElementById(tm.tkChg);
-        if (te) { te.textContent = txt; te.className = cls + ' has-data'; }
-        if (tm.tkVal === 'tk-nifty') { setEl('tk-nifty2', price); const e2 = document.getElementById('tk-nifty-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } }
-        if (tm.tkVal === 'tk-sensex') { setEl('tk-sensex2', price); const e2 = document.getElementById('tk-sensex-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data'; } }
+        if (te) { te.textContent = txt; te.className = cls + ' has-data' + (isStale ? ' is-stale' : ''); }
+        if (tm.tkVal === 'tk-nifty') { setEl('tk-nifty2', price); markStaleElement('tk-nifty2', isStale); const e2 = document.getElementById('tk-nifty-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data' + (isStale ? ' is-stale' : ''); } }
+        if (tm.tkVal === 'tk-sensex') { setEl('tk-sensex2', price); markStaleElement('tk-sensex2', isStale); const e2 = document.getElementById('tk-sensex-chg2'); if (e2) { e2.textContent = txt; e2.className = cls + ' has-data' + (isStale ? ' is-stale' : ''); } }
       }
       sidebarIndices.forEach(item => {
         if (item.sym === key) {
           const prevTxt = document.getElementById(item.valId)?.textContent;
           setEl(item.valId, price);
+          markStaleElement(item.valId, isStale);
           const ce = document.getElementById(item.chgId);
-          if (ce) { ce.textContent = txt; ce.className = 'idx-chg has-data ' + cls; }
+          if (ce) { ce.textContent = txt; ce.className = 'idx-chg has-data ' + cls + (isStale ? ' is-stale' : ''); }
           if (prevTxt && prevTxt !== '--' && prevTxt !== price) flashCell(item.valId, cls);
           if (d.week52High && d.week52Low) update52WBar(item.valId, raw, d.week52Low, d.week52High);
         }
@@ -2243,7 +2330,7 @@ async function fetchHeatmap() {
   if (heatmapData) { renderHeatmap(); return; }
   el.innerHTML = '<div style="color:#4CAF82;text-align:center;padding:40px;font-size:14px">Loading heatmap...</div>';
   try {
-    const res = await fetch(`/api/heatmap?set=${encodeURIComponent(heatmapSet)}`);
+    const res = await apiFetch(`/api/heatmap?set=${encodeURIComponent(heatmapSet)}`);
     heatmapData = await res.json();
     renderHeatmap();
     if (Array.isArray(heatmapData) && heatmapData.length) { const adv = heatmapData.filter(s => (s.pct || 0) > 0).length; const dec = heatmapData.filter(s => (s.pct || 0) < 0).length; renderBreadthBar(adv, dec); }
@@ -2335,7 +2422,7 @@ async function fetchMF() {
   showMFSkeleton();
   const fetchFull = async (scheme) => {
     try {
-      const r = await fetch('/api/mfapi/' + scheme.code); if (!r.ok) return null;
+      const r = await apiFetch('/api/mfapi/' + scheme.code); if (!r.ok) return null;
       const d = await r.json(); const h = d?.data || []; if (!h.length) return null;
       const latest = parseFloat(h[0]?.nav || 0); const prev = parseFloat(h[1]?.nav || latest);
       const chg1d = latest - prev; const pct1d = prev > 0 ? (chg1d / prev) * 100 : 0;
@@ -2423,7 +2510,7 @@ async function fetchCommodities() {
   if (commoditiesData) { renderCommodities(); return; }
   el.innerHTML = `<div style="color:#666;text-align:center;padding:40px;">Loading commodities...</div>`;
   try {
-    const res = await fetch('/api/global'); const d = await res.json();
+    const res = await apiFetch('/api/global'); const d = await res.json();
     const usdInrRaw = document.getElementById('m-usdinr')?.textContent || ''; const usdInr = parseFloat(usdInrRaw) || 84;
     commoditiesData = [
       { key: 'GOLD', label: 'GOLD', unit: 'USD/oz', section: 'PRECIOUS METALS', data: d.GOLD, convFn: p => (p * usdInr / 31.1035 * 10), indUnit: '₹/10g' },
@@ -2467,7 +2554,7 @@ function renderCommodities() {
 // ── LOCK-IN ──
 async function fetchLockin() {
   if (lockinData) { renderLockin(); return; }
-  try { const res = await fetch('/api/lockin'); lockinData = await res.json(); renderLockin(); }
+  try { const res = await apiFetch('/api/lockin'); lockinData = await res.json(); renderLockin(); }
   catch { const el = document.getElementById('lockin-content'); if (el) el.innerHTML = '<div style="color:#ff6666;padding:14px">Lock-in feed unavailable.</div>'; }
 }
 
@@ -2503,8 +2590,8 @@ let eventsState = {
 async function fetchEvents() {
   try {
     const [dRes, iRes] = await Promise.all([
-      fetch('/api/events').then(r => r.json()),
-      fetch('/api/events/impact').then(r => r.json())
+      apiFetch('/api/events').then(r => r.json()),
+      apiFetch('/api/events/impact').then(r => r.json())
     ]);
     eventsState.data = dRes;
     eventsState.impact = iRes;
@@ -2858,7 +2945,7 @@ async function fetchIndicesFastData() {
   const controller = new AbortController(); indicesFastController = controller;
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const res = await fetch('/api/indices-fast', { signal: controller.signal });
+    const res = await apiFetch('/api/indices-fast', { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const fast = await res.json();
     const quotes = fast?.indices || {};
@@ -2880,13 +2967,27 @@ async function fetchIndicesFastData() {
   }
 }
 
+async function fetchQuotesData() {
+  try {
+    const res = await apiFetch('/api/quotes');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const quotes = await res.json();
+    dashStore = { ...(dashStore || {}), quotes: { ...(dashStore?.quotes || {}), ...quotes } };
+    processLivePrices(quotes);
+    applyDashboardHealthLabel(dashStore.quotes || {});
+    renderApp();
+  } catch (e) {
+    console.error('Quotes error:', e.message);
+  }
+}
+
 async function fetchDashboardSlowData() {
   if (dashboardSlowFetching) return; dashboardSlowFetching = true;
   if (dashboardSlowController) { try { dashboardSlowController.abort(); } catch {} }
   const controller = new AbortController(); dashboardSlowController = controller;
   const timeout = setTimeout(() => controller.abort(), 18000);
   try {
-    const res = await fetch('/api/dashboard-slow', { signal: controller.signal });
+    const res = await apiFetch('/api/dashboard-slow', { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const slow = await res.json();
     dashStore = { ...(dashStore || {}), fiiDii: slow?.fiiDii || dashStore?.fiiDii, slowTs: slow?.ts };
@@ -2897,7 +2998,7 @@ async function fetchDashboardSlowData() {
     if (slow?.macro?.gsec) macroQuotes['IN10Y:Bond'] = slow.macro.gsec;
     if (Object.keys(macroQuotes).length) { dashStore.quotes = { ...(dashStore?.quotes || {}), ...macroQuotes }; processLivePrices(macroQuotes); }
     processFiiDii(slow?.fiiDii || null);
-    processMiniVix({ vix: slow?.vix?.series, gsec: slow?.macro?.gsecDaily, spot: { vix: slow?.vix?.spot?.price, gsec: slow?.macro?.gsec?.price }, meta: { vix: slow?.vix?.status, gsec: { tag: 'DELAYED 15M', source: 'Yahoo Finance India 10Y' } } });
+    processMiniVix({ vix: slow?.vix?.series, gsec: slow?.macro?.gsecDaily, spot: { vix: slow?.vix?.spot?.price, gsec: slow?.macro?.gsec?.price }, meta: { vix: slow?.vix?.status, gsec: { tag: slow?.macro?.gsec?.freshness || 'DELAYED 15M', source: slow?.macro?.gsec?.source || 'Yahoo Finance India 10Y' } } });
     renderApp();
   } catch (e) {
     if (e.name === 'AbortError') return;
@@ -2909,11 +3010,14 @@ async function fetchDashboardSlowData() {
   }
 }
 
-function fetchDashboardData() { return fetchIndicesFastData(); }
+function fetchDashboardData() {
+  fetchIndicesFastData();
+  fetchQuotesData();
+}
 
 async function fetchMacroContext() {
   try {
-    const res = await fetch('/api/macro-context');
+    const res = await apiFetch('/api/macro-context');
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Macro context unavailable');
     macroContext = data;
@@ -2927,7 +3031,7 @@ function manualRefresh() {
   refreshCountdown = 30;
   const el = document.getElementById('sb-refresh');
   if (el) { el.innerHTML = '<span style="display:inline-block;margin-right:4px">↻</span>REFRESHING...'; el.style.color = '#ff6600'; }
-  fetchIndicesFastData();
+  fetchDashboardData();
   scheduleDashboardSlowLoad(200);
   fetchMacroContext();
 }
@@ -2981,11 +3085,12 @@ async function init() {
     isStartupBoot = false;
 
     // FIX 3: Explicitly load news — this is the primary fix for blank news panel
+    if (!sopState.data) fetchSOPData();
     loadCategory(currentCat);
     fetchEvents();
     startEventCountdownTick();
     setInterval(fetchEvents, 300000);
-    fetchIndicesFastData();
+    fetchDashboardData();
     scheduleDashboardSlowLoad(200);
     fetchMacroContext();
     startFastRefreshInterval();
