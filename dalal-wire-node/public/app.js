@@ -1322,14 +1322,27 @@ function showNewsLoading() {
   }
 }
 
-function doSearch() {
+async function doSearch() {
   const q = document.getElementById('q-input').value.trim().toLowerCase();
   if (!q) { loadCategory(currentCat); return; }
   const liveAll = Object.values(newsCache).filter(c => c && Array.isArray(c.stories)).flatMap(c => c.stories);
   const seen = new Set(); const merged = [];
   [...liveAll, ...currentStories].forEach(s => { const key = (s.headline || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50); if (!seen.has(key)) { seen.add(key); merged.push(s); } });
-  currentStories = merged.filter(s => ((s.headline || '').toLowerCase().includes(q)) || ((s.body || '').toLowerCase().includes(q)) || ((s.tags || []).some(t => t.toLowerCase().includes(q))));
-  setHeadlinesEmptyState('No live search matches', 'Try a broader symbol or topic.'); activeIdx = -1;
+  let matches = merged.filter(s => ((s.headline || '').toLowerCase().includes(q)) || ((s.body || '').toLowerCase().includes(q)) || ((s.tags || []).some(t => t.toLowerCase().includes(q))));
+  if (!matches.length) {
+    showNewsLoading();
+    try {
+      const res = await apiFetch(`/api/news/search?q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error('API ' + res.status);
+      const stories = await res.json();
+      matches = Array.isArray(stories) ? stories : [];
+    } catch (e) {
+      console.warn('News search failed:', e.message);
+      matches = [];
+    }
+  }
+  currentStories = matches;
+  setHeadlinesEmptyState('No live search matches', 'Try a broader market, country, sector, or ticker.'); activeIdx = -1;
   document.getElementById('hl-label').textContent = 'SEARCH'; document.getElementById('hl-count').textContent = currentStories.length + ' RESULTS';
   renderApp();
   document.querySelectorAll('.chip').forEach(c => c.classList.remove('active-chip')); renderHeadlines(true);
@@ -1340,26 +1353,15 @@ document.getElementById('q-input').addEventListener('keydown', e => { if (e.key 
 function drawMiniSparkline(canvasId, series, line, fill) {
   const c = document.getElementById(canvasId); if (!c || !Array.isArray(series) || !series.length) return;
   const src = series.map(Number).filter(Number.isFinite);
-  if (!src.length) return;
+  if (!src.length) { c.style.display = 'none'; return; }
   c.width = c.parentElement.clientWidth - 12; c.height = 48;
   const ctx = c.getContext('2d'); const w = c.width, h = c.height; ctx.clearRect(0, 0, w, h);
   const unique = new Set(src.map(v => v.toFixed(4))).size;
   if (src.length < 3 || unique < 2) {
-    ctx.strokeStyle = 'rgba(255,255,255,.12)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, h - 10);
-    ctx.lineTo(w, h - 10);
-    ctx.stroke();
-    ctx.fillStyle = line;
-    ctx.beginPath();
-    ctx.arc(w - 12, h - 10, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(160,160,170,.8)';
-    ctx.font = '10px monospace';
-    ctx.fillText('spot only', 2, 14);
+    c.style.display = 'none';
     return;
   }
+  c.style.display = 'block';
   const min = Math.min(...src), max = Math.max(...src), rng = (max - min) || 1;
   const pts = src.map((v, i) => ({ x: (i / (src.length - 1)) * w, y: h - 6 - ((v - min) / rng) * (h - 12) }));
   ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
@@ -1371,6 +1373,10 @@ function renderMiniMacroCharts() {
   const vv = miniVixSeries[miniVixSeries.length - 1]; const gv = miniGsecSeries[miniGsecSeries.length - 1];
   if (Number.isFinite(vv)) setEl('mini-vix-val', vv.toFixed(2));
   if (Number.isFinite(gv)) setEl('mini-gsec-val', gv.toFixed(3) + '%');
+  const vixMeta = document.getElementById('mini-vix-meta');
+  const gsecMeta = document.getElementById('mini-gsec-meta');
+  if (vixMeta && miniVixSeries.length < 3) vixMeta.textContent = vixMeta.textContent.replace(/\s*-\s*$/, '') || 'Spot quote only';
+  if (gsecMeta && miniGsecSeries.length < 3) gsecMeta.textContent = gsecMeta.textContent.replace(/\s*-\s*$/, '') || 'Spot quote only';
   drawMiniSparkline('mini-vix-chart', miniVixSeries, '#ff9900', 'rgba(255,153,0,.14)');
   drawMiniSparkline('mini-gsec-chart', miniGsecSeries, '#7fd5ff', 'rgba(127,213,255,.12)');
 }

@@ -1534,11 +1534,18 @@ app.get('/api/micro-series', async (req, res) => {
   setApiCacheHeaders(res, 10, 30);
   if (isFresh('micro_series', 5 * 60_000)) return res.json(getCache('micro_series').data);
   try {
-    const [vixSeries, gsecSeries, indiaVix] = await Promise.all([
+    const [vixSeriesRaw, gsecSeriesRaw, indiaVix] = await Promise.all([
       getIndiaVixSeries(24),
       fetchSeries('^IN10YT=RR', 24),
       getIndiaVixQuote(),
     ]);
+    const vixSeries = vixSeriesRaw.length ? vixSeriesRaw : await fetchSeries('^INDIAVIX', 24);
+    let gsecSeries = gsecSeriesRaw;
+    let gsecMeta = buildStatus('DELAYED 15m', 'Yahoo Finance India 10Y Bond');
+    if (!gsecSeries.length) {
+      gsecSeries = await fetchSeries('^TNX', 24);
+      if (gsecSeries.length) gsecMeta = buildStatus('PROXY (US 10Y)', 'Yahoo Finance US 10Y proxy');
+    }
     const gsecQuote = gsecSeries.length ? null : await getGsecQuote();
     const gsecFallbackSeries = gsecQuote?.price ? [gsecQuote.price] : microHistory.gsec.slice(-24);
     const out = {
@@ -1548,7 +1555,7 @@ app.get('/api/micro-series', async (req, res) => {
         vix:  indiaVix?.stale
           ? buildStatus('FALLBACK', 'NSE India VIX cache')
           : buildStatus('DELAYED 15m', 'NSE India VIX — Yahoo Finance'),
-        gsec: buildStatus('DELAYED 15m', 'Yahoo Finance India 10Y Bond'),
+        gsec: gsecMeta,
       },
       spot: {
         vix:  indiaVix?.price ?? null,
@@ -2631,6 +2638,36 @@ async function fetchCategoryNews(cat) {
   }));
 }
 
+async function fetchSearchNews(query) {
+  const q = String(query || '').trim().slice(0, 120);
+  if (!q) return [];
+  const source = {
+    name: 'Google News',
+    url: `https://news.google.com/rss/search?q=${encodeURIComponent(`${q} market stocks india`)}&hl=en-IN&gl=IN&ceid=IN:en`,
+    cat: ['search'],
+  };
+  const items = await fetchRssFeed(source);
+  return items.slice(0, 20).map(item => {
+    const text = `${item.title} ${item.description}`;
+    const entities = extractEntities(text);
+    return {
+      headline: item.title,
+      body: item.description || '',
+      source: item.source,
+      via: item.via || 'Google News',
+      url: item.link,
+      sentiment: sentimentFromText(text),
+      tags: entities.slice(0, 4).map(e => e.label),
+      entities,
+      isBreaking: false,
+      enrichedScore: scoreRelevance(text, 'market') + 1,
+      sourceRank: getSourceRank(item.source),
+      pubDate: item.pubDate,
+      freshness: 'RSS',
+    };
+  });
+}
+
 async function warmAllNewsCategories() {
   console.log('[WARM] Refreshing news category caches');
   for (const cat of ['market', 'banks', 'sectors', 'macro', 'stocks', 'global']) {
@@ -2644,6 +2681,21 @@ async function warmAllNewsCategories() {
 app.get('/api/news/:category', async (req, res) => {
   setApiCacheHeaders(res, 10, 30);
   const cat   = req.params.category.toLowerCase();
+  if (cat === 'search') {
+    const q = String(req.query.q || '').trim();
+    const searchKey = `news_search_${q.toLowerCase()}`;
+    if (!q) return res.json([]);
+    if (isFresh(searchKey, 60_000)) return res.json(getCache(searchKey).data);
+    try {
+      const stories = await fetchSearchNews(q);
+      setCache(searchKey, stories);
+      return res.json(stories);
+    } catch (e) {
+      const stale = getCache(searchKey);
+      if (stale) return res.json(stale.data);
+      return res.status(500).json(structuredEndpointError(e.message));
+    }
+  }
   const key   = `news_${cat}`;
   const force = req.query.force === '1';
   if (!force && isFresh(key, getNewsTTL())) {
@@ -2667,6 +2719,23 @@ app.get('/api/news/:category', async (req, res) => {
   } catch (e) {
     const stale = getCache(key);
     if (stale) return res.json(Array.isArray(stale.data) ? { data: stale.data, stale: true, freshness: 'FALLBACK' } : { ...stale.data, stale: true, freshness: 'FALLBACK' });
+    res.status(500).json(structuredEndpointError(e.message));
+  }
+});
+
+app.get('/api/news/search', async (req, res) => {
+  setApiCacheHeaders(res, 10, 30);
+  const q = String(req.query.q || '').trim();
+  const key = `news_search_${q.toLowerCase()}`;
+  if (!q) return res.json([]);
+  if (isFresh(key, 60_000)) return res.json(getCache(key).data);
+  try {
+    const stories = await fetchSearchNews(q);
+    setCache(key, stories);
+    res.json(stories);
+  } catch (e) {
+    const stale = getCache(key);
+    if (stale) return res.json(stale.data);
     res.status(500).json(structuredEndpointError(e.message));
   }
 });
