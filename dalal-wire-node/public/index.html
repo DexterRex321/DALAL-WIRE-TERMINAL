@@ -15,8 +15,9 @@
   <div class="boot-meta">System Initialization . . .</div>
 </div>
 <style>
+/* Task 1.1: Boot splash delay reduced from 1.2s to 0.3s */
 @keyframes bootFade { to { opacity:0; pointer-events:none; } }
-.boot-splash { position:fixed;inset:0;background:#0a0a0a;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono);animation:bootFade .4s ease 1.2s both }
+.boot-splash { position:fixed;inset:0;background:#0a0a0a;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono);animation:bootFade .4s ease 0.3s both }
 .boot-logo { color:var(--orange);font-size:14px;font-weight:600;letter-spacing:0.2em;margin-bottom:8px;text-transform:uppercase }
 .boot-meta { color:var(--dim);font-size:9px;letter-spacing:0.12em;text-transform:uppercase }
 </style>
@@ -34,37 +35,50 @@
     </div>
   </div>
 
-  <div id="ticker-strip" onmouseenter="document.getElementById('ticker-inner').style.animationPlayState='paused'" onmouseleave="document.getElementById('ticker-inner').style.animationPlayState='running'"><span id="ticker-inner">
-    <span class="ti"><span class="ts">NIFTY50</span><span id="tk-nifty"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">SENSEX</span><span id="tk-sensex"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">BANKNIFTY</span><span id="tk-banknifty"><span class="skel-pill skel-val"></span></span> <span id="tk-banknifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">RELIANCE</span><span id="tk-reliance"><span class="skel-pill skel-val"></span></span> <span id="tk-reliance-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">TCS</span><span id="tk-tcs"><span class="skel-pill skel-val"></span></span> <span id="tk-tcs-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">INFY</span><span id="tk-infy"><span class="skel-pill skel-val"></span></span> <span id="tk-infy-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">HDFCBANK</span><span id="tk-hdfc"><span class="skel-pill skel-val"></span></span> <span id="tk-hdfc-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">ICICIBANK</span><span id="tk-icici"><span class="skel-pill skel-val"></span></span> <span id="tk-icici-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">SBI</span><span id="tk-sbi"><span class="skel-pill skel-val"></span></span> <span id="tk-sbi-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">WIPRO</span><span id="tk-wipro"><span class="skel-pill skel-val"></span></span> <span id="tk-wipro-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">TATAMOTORS</span><span id="tk-tatamotors"><span class="skel-pill skel-val"></span></span> <span id="tk-tatamotors-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">TATASTEEL</span><span id="tk-tatasteel"><span class="skel-pill skel-val"></span></span> <span id="tk-tatasteel-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">ADANIENT</span><span id="tk-adani"><span class="skel-pill skel-val"></span></span> <span id="tk-adani-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">USD/INR</span><span id="tk-usdinr"><span class="skel-pill skel-val"></span></span> <span id="tk-usdinr-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">GOLD</span><span id="tk-gold"><span class="skel-pill skel-val"></span></span> <span id="tk-gold-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">CRUDE WTI</span><span id="tk-crude"><span class="skel-pill skel-val"></span></span> <span id="tk-crude-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">NIFTY50</span><span id="tk-nifty2"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-    <span class="ti"><span class="ts">SENSEX</span><span id="tk-sensex2"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
-  </span></div>
+  <!-- Task 1.2: Ticker strip items are now clickable — each .ti calls selectTicker() -->
+  <div id="ticker-strip"
+    onmouseenter="document.getElementById('ticker-inner').style.animationPlayState='paused'"
+    onmouseleave="document.getElementById('ticker-inner').style.animationPlayState='running'">
+    <span id="ticker-inner">
+      <span class="ti" onclick="selectTicker('NIFTY')" title="Click to analyse NIFTY"><span class="ts">NIFTY50</span><span id="tk-nifty"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('SENSEX')" title="Click to analyse SENSEX"><span class="ts">SENSEX</span><span id="tk-sensex"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('BANKNIFTY')" title="Click to analyse BANKNIFTY"><span class="ts">BANKNIFTY</span><span id="tk-banknifty"><span class="skel-pill skel-val"></span></span> <span id="tk-banknifty-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('RELIANCE')" title="Click to analyse RELIANCE"><span class="ts">RELIANCE</span><span id="tk-reliance"><span class="skel-pill skel-val"></span></span> <span id="tk-reliance-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('TCS')" title="Click to analyse TCS"><span class="ts">TCS</span><span id="tk-tcs"><span class="skel-pill skel-val"></span></span> <span id="tk-tcs-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('INFY')" title="Click to analyse INFY"><span class="ts">INFY</span><span id="tk-infy"><span class="skel-pill skel-val"></span></span> <span id="tk-infy-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('HDFCBANK')" title="Click to analyse HDFCBANK"><span class="ts">HDFCBANK</span><span id="tk-hdfc"><span class="skel-pill skel-val"></span></span> <span id="tk-hdfc-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('ICICIBANK')" title="Click to analyse ICICIBANK"><span class="ts">ICICIBANK</span><span id="tk-icici"><span class="skel-pill skel-val"></span></span> <span id="tk-icici-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('SBIN')" title="Click to analyse SBI"><span class="ts">SBI</span><span id="tk-sbi"><span class="skel-pill skel-val"></span></span> <span id="tk-sbi-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('WIPRO')" title="Click to analyse WIPRO"><span class="ts">WIPRO</span><span id="tk-wipro"><span class="skel-pill skel-val"></span></span> <span id="tk-wipro-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('TATAMOTORS')" title="Click to analyse TATAMOTORS"><span class="ts">TATAMOTORS</span><span id="tk-tatamotors"><span class="skel-pill skel-val"></span></span> <span id="tk-tatamotors-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('TATASTEEL')" title="Click to analyse TATASTEEL"><span class="ts">TATASTEEL</span><span id="tk-tatasteel"><span class="skel-pill skel-val"></span></span> <span id="tk-tatasteel-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('ADANIENT')" title="Click to analyse ADANIENT"><span class="ts">ADANIENT</span><span id="tk-adani"><span class="skel-pill skel-val"></span></span> <span id="tk-adani-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('USDINR')" title="Click to analyse USD/INR"><span class="ts">USD/INR</span><span id="tk-usdinr"><span class="skel-pill skel-val"></span></span> <span id="tk-usdinr-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('GOLD')" title="Click to analyse GOLD"><span class="ts">GOLD</span><span id="tk-gold"><span class="skel-pill skel-val"></span></span> <span id="tk-gold-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('CRUDE')" title="Click to analyse CRUDE"><span class="ts">CRUDE WTI</span><span id="tk-crude"><span class="skel-pill skel-val"></span></span> <span id="tk-crude-chg" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <!-- Duplicates for continuous scroll loop -->
+      <span class="ti" onclick="selectTicker('NIFTY')" title="Click to analyse NIFTY"><span class="ts">NIFTY50</span><span id="tk-nifty2"><span class="skel-pill skel-val"></span></span> <span id="tk-nifty-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+      <span class="ti" onclick="selectTicker('SENSEX')" title="Click to analyse SENSEX"><span class="ts">SENSEX</span><span id="tk-sensex2"><span class="skel-pill skel-val"></span></span> <span id="tk-sensex-chg2" class="flat"><span class="skel-pill skel-chg"></span></span></span>
+    </span>
+  </div>
 
   <div id="events-strip">
     <div id="events-strip-label">EVENTS</div>
     <div id="events-strip-items">
       <!-- populated by JS -->
     </div>
-    <button id="events-strip-more" 
+    <button id="events-strip-more"
       onclick="switchRP('events')"
       title="Full calendar">
       ALL →
     </button>
+  </div>
+
+  <!-- Task 1.4: Session Narrative Bar — live one-sentence market summary -->
+  <div id="session-narrative">
+    <span id="sn-dot" class="sn-dot"></span>
+    <span id="sn-text">Connecting to market data...</span>
+    <span id="sn-ts"></span>
   </div>
 
   <div id="body">
@@ -130,20 +144,27 @@
     </div>
 
     <div id="right-panel">
-      <!-- ── TAB BAR: all tabs visible via flex-wrap ── -->
+      <!-- Task 3.3: Tab bar reorganised into 3 functional clusters with separators -->
       <div id="rp-tabs-container">
         <div id="rp-tabs">
+          <!-- GROUP 1: NEWS -->
           <span class="rp-tab active-rp-tab" data-rp="detail"      onclick="switchRP('detail')">STORY</span>
+          <span class="rp-tab"               data-rp="global"      onclick="switchRP('global')">GLOBAL</span>
+          <span class="rp-tab"               data-rp="events"      onclick="switchRP('events')">EVENTS</span>
+          <!-- Separator -->
+          <span class="rp-tab-sep"></span>
+          <!-- GROUP 2: ANALYSIS -->
           <span class="rp-tab"               data-rp="sop"         onclick="switchRP('sop')">MY BRIEF</span>
           <span class="rp-tab"               data-rp="advice"      onclick="switchRP('advice')">ADVICE</span>
-          <span class="rp-tab"               data-rp="global"      onclick="switchRP('global')">GLOBAL</span>
-          <span class="rp-tab"               data-rp="heatmap"     onclick="switchRP('heatmap')">HEATMAP</span>
-          <span class="rp-tab"               data-rp="mf"          onclick="switchRP('mf')">FUNDS & ETF</span>
-          <span class="rp-tab"               data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
-          <span class="rp-tab"               data-rp="lockin"      onclick="switchRP('lockin')">LOCK-IN EXPIRY</span>
-          <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTIMENT</span>
           <span class="rp-tab"               data-rp="compare"     onclick="switchRP('compare')">COMPARE</span>
-          <span class="rp-tab"               data-rp="events"      onclick="switchRP('events')">EVENTS</span>
+          <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTIMENT</span>
+          <!-- Separator -->
+          <span class="rp-tab-sep"></span>
+          <!-- GROUP 3: DATA -->
+          <span class="rp-tab"               data-rp="heatmap"     onclick="switchRP('heatmap')">HEATMAP</span>
+          <span class="rp-tab"               data-rp="mf"          onclick="switchRP('mf')">FUNDS &amp; ETF</span>
+          <span class="rp-tab"               data-rp="commodities" onclick="switchRP('commodities')">COMMODITIES</span>
+          <span class="rp-tab"               data-rp="lockin"      onclick="switchRP('lockin')">LOCK-IN</span>
         </div>
       </div>
 

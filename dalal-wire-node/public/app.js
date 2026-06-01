@@ -59,9 +59,12 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
 }
 
 // Start token rotation loop
-setInterval(async () => {
+setInterval(() => {
   dToken = null;
-  await getDalalToken();
+  // Eagerly mark as fetching to prevent concurrent refreshes.
+  if (!dTokenFetching) {
+    getDalalToken().catch(() => {});
+  }
 }, 14 * 60 * 1000);
 
 // ── SIDEBAR CONFIG ──
@@ -1199,6 +1202,15 @@ function applyNewsIntelligence(stories) {
   }
 }
 
+function getStoryTier(story) {
+  const ageMs = Date.now() - new Date(story.pubDate).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (story.isBreaking) return 'tier-1';
+  if (story.enrichedScore >= 6 && ageHours < 2) return 'tier-2';
+  if (ageHours > 4) return 'tier-4';
+  return 'tier-3';
+}
+
 function renderHeadlines(resetScroll = false) {
   const list = document.getElementById('hl-list'); const countEl = document.getElementById('hl-count');
   if (!list || !countEl) return;
@@ -1207,7 +1219,16 @@ function renderHeadlines(resetScroll = false) {
   if (resetScroll && hlContainer) hlContainer.scrollTop = 0;
   if (!currentStories.length) {
     countEl.textContent = '0 STORIES';
-    list.innerHTML = `<div class="headline-empty"><div class="headline-empty-title">${headlinesEmptyState.title}</div><div class="headline-empty-copy">${headlinesEmptyState.detail}</div></div>`;
+    list.innerHTML = `
+    <div class="headline-empty">
+      <div class="headline-empty-eyebrow">FEED STATUS</div>
+      <div class="headline-empty-title">${escapeHtml(headlinesEmptyState.title)}</div>
+      <div class="headline-empty-copy">${escapeHtml(headlinesEmptyState.detail)}</div>
+      <div class="headline-empty-actions">
+        <span class="headline-empty-btn" onclick="refreshNews()">↻ REFRESH FEED</span>
+        <span class="headline-empty-btn" onclick="loadCategory('market')">→ MARKET NEWS</span>
+      </div>
+    </div>`;
     return;
   }
   
@@ -1216,20 +1237,22 @@ function renderHeadlines(resetScroll = false) {
   countEl.textContent = currentStories.length + ' STORIES';
   currentStories.forEach((s, i) => {
     const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '') + (s.watchlistMatch ? ' watchlist-match' : '');
+    d.dataset.tier = getStoryTier(s);
+    d.dataset.sentiment = s.sentiment;
     const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : '';
-    const srcStr = s.source ? `<span class="nl-src">${escapeHtml(s.source)}</span>` : '';
+    const srcDisplay = s.source ? `<span class="nl-source-name">${escapeHtml(s.via ? s.source : s.source)}</span>` : '';
     
     let wlBadge = s.watchlistMatch ? `<span class="nl-watchlist-badge">★ WATCHLIST</span>` : '';
     
     let entitiesHtml = '';
-    if (s.entities && s.entities.some(e => e.type === 'stock')) {
+    if (s.entities && s.entities.length > 0) {
       entitiesHtml = `<div class="nl-entities">` + 
-        s.entities.map(e => `<span class="nl-entity-tag type-${escapeHtml(e.type)}">${escapeHtml(e.label)}</span>`).join('') + 
+        s.entities.slice(0, 4).map(e => `<span class="nl-entity-tag type-${escapeHtml(e.type)}">${escapeHtml(e.label)}</span>`).join('') + 
         `</div>`;
     }
     
     const breaking = '<span class="ntag" style="background:#1a0000;color:#ff3333;border:1px solid #330000;animation:blink-dim 1.5s infinite">BREAKING</span>';
-    d.innerHTML = `<div class="nl-meta">${s.isBreaking ? breaking : tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${escapeHtml(timeStr)}</span></div><div class="nl-hl">${escapeHtml(cleanNewsText(s.headline))}</div>${entitiesHtml}${srcStr}`;
+    d.innerHTML = `<div class="nl-meta">${s.isBreaking ? breaking : tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${escapeHtml(timeStr)}</span>${srcDisplay}</div><div class="nl-hl">${escapeHtml(cleanNewsText(s.headline))}</div>${entitiesHtml}`;
     d.addEventListener('click', () => showDetail(i)); list.appendChild(d);
   });
   animateCollection('#hl-list .nl', { x: -10, y: 10, stagger: 0.035, duration: 0.32 });
@@ -1276,7 +1299,7 @@ const NEWS_CLIENT_TTL = 5 * 60 * 1000;
 
 async function fetchLiveNews(cat, useCache = true) {
   const cached = newsCache[cat]; const isFresh = cached && (Date.now() - cached.ts) < NEWS_CLIENT_TTL;
-  if (useCache && isFresh) { currentStories = Array.isArray(cached.stories) ? cached.stories : []; sectionLoadState.news = 'ready'; setHeadlinesEmptyState('No cached live stories', 'Refresh the feed or try another category.'); renderHeadlines(true); renderApp(); return; }
+  if (useCache && isFresh) { currentStories = Array.isArray(cached.stories) ? cached.stories : []; sectionLoadState.news = 'ready'; setHeadlinesEmptyState('No cached live stories', 'Refresh the feed or try another category.'); renderHeadlines(true); renderApp(); const cacheAge = Math.round((Date.now() - cached.ts) / 60000); const cEl = document.getElementById('hl-count'); if (cEl) cEl.textContent = `${currentStories.length} STORIES · CACHED · ${cacheAge}m ago`; return; }
   if (newsRequestController) { try { newsRequestController.abort(); } catch {} }
   const token = ++newsRequestToken;
   const controller = new AbortController();
@@ -1312,12 +1335,23 @@ function refreshNews() { clearTimeout(refreshNewsTimer); refreshNewsTimer = setT
 
 function showNewsLoading() {
   sectionLoadState.news = 'loading';
-  const list = document.getElementById('hl-list'); list.innerHTML = ''; 
+  const list = document.getElementById('hl-list');
+  list.innerHTML = '';
   const countEl = document.getElementById('hl-count');
   if (countEl) countEl.textContent = 'LOADING...';
+  const widths = [82, 91, 74, 88, 79, 85];
   for (let i = 0; i < 6; i++) {
-    const d = document.createElement('div'); d.className = 'nl';
-    d.innerHTML = `<div class="section-skeleton-line" style="width:${60 + Math.random() * 30 | 0}%"></div><div class="section-skeleton-line section-skeleton-line-short" style="width:${40 + Math.random() * 40 | 0}%"></div>`;
+    const d = document.createElement('div');
+    d.className = 'nl nl-skeleton';
+    d.innerHTML = `
+      <div class="nl-meta">
+        <span class="skel-pill" style="width:44px;height:16px;border-radius:2px;"></span>
+        <span class="skel-pill" style="width:52px;height:10px;margin-left:6px;"></span>
+      </div>
+      <div class="skel-pill" style="width:${widths[i]}%;height:13px;margin:4px 0 3px;"></div>
+      <div class="skel-pill" style="width:${widths[(i + 2) % 6] - 20}%;height:11px;"></div>
+      <div class="skel-pill" style="width:60px;height:10px;margin-top:5px;"></div>
+    `;
     list.appendChild(d);
   }
 }
@@ -1357,8 +1391,16 @@ function drawMiniSparkline(canvasId, series, line, fill) {
   c.width = c.parentElement.clientWidth - 12; c.height = 48;
   const ctx = c.getContext('2d'); const w = c.width, h = c.height; ctx.clearRect(0, 0, w, h);
   const unique = new Set(src.map(v => v.toFixed(4))).size;
-  if (src.length < 3 || unique < 2) {
-    c.style.display = 'none';
+  if (src.length < 2 || unique < 2) {
+    c.style.display = 'block';
+    ctx.beginPath();
+    ctx.moveTo(0, 24);
+    ctx.lineTo(w, 24);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
     return;
   }
   c.style.display = 'block';
@@ -1722,8 +1764,8 @@ function drawCompareChart(data) {
     let left = mouseX + 14;
     let top  = mouseY - 10;
 
-    const ttW = ttEl.offsetWidth  || 160;
-    const ttH = ttEl.offsetHeight || 90;
+    const ttW = Math.max(ttEl.offsetWidth, 160);
+    const ttH = Math.max(ttEl.offsetHeight, 90);
 
     if (left + ttW > cW - 4)  left = mouseX - ttW - 14;
     if (top  + ttH > cH - 4)  top  = mouseY - ttH - 10;
@@ -2257,6 +2299,8 @@ function processLivePrices(data) {
       if (key.startsWith('IN10Y')) { const e = document.getElementById('m-gsec'); if (e) { e.textContent = raw.toFixed(3) + '%' + (chgRaw >= 0 ? ' ▲' : ' ▼'); e.className = 'mv ' + (chgRaw > 0 ? 'dn' : 'up'); } miniGsecSeries.push(raw); if (miniGsecSeries.length > 24) miniGsecSeries.shift(); }
     });
     renderMiniMacroCharts();
+    updateSessionNarrative();
+    applyAmbientMarketState();
     if (heatmapData && heatmapData.length) { const adv = heatmapData.filter(s => (s.pct || 0) > 0).length; const dec = heatmapData.filter(s => (s.pct || 0) < 0).length; renderBreadthBar(adv, dec); }
   } catch (e) { console.error('processLivePrices:', e.message); }
 }
@@ -2625,8 +2669,8 @@ function renderEventsStrip() {
   let html = '';
   eventsState.data.next3.forEach(ev => {
     let cdHtml = '';
-    if (ev.urgency === 'today') cdHtml = 'TODAY';
-    else if (ev.urgency === 'imminent') cdHtml = ev.daysUntil === 1 ? 'TOMORROW' : `${ev.hoursUntil || 0} HRS`;
+    if (ev.urgency === 'today') cdHtml = '● TODAY';
+    else if (ev.urgency === 'imminent') cdHtml = ev.daysUntil === 1 ? '▲ TOMORROW' : `${ev.hoursUntil || 0} HRS`;
     else cdHtml = `${ev.daysUntil} DAYS`;
     
     html += `
@@ -2765,16 +2809,49 @@ function processFiiDii(data) {
   try {
     if (!data) return; fiiDiiData = data;
     const fiiLatest = pickLatestFlowEntry(fiiDiiData, 'fii'); const diiLatest = pickLatestFlowEntry(fiiDiiData, 'dii');
-    const today = { fii_net: fiiLatest.net, dii_net: diiLatest.net, date: fiiLatest.date || diiLatest.date || '' };
+    const today = { fii_net: fiiLatest.net, dii_net: diiLatest.net, date: fiiLatest.date || diiLatest.date || '', dataAvailable: data?.today?.dataAvailable };
     const fiiEl = document.getElementById('m-fii'); const diiEl = document.getElementById('m-dii');
-    if (fiiEl) { if (Number.isFinite(today.fii_net)) { const v = today.fii_net; const sign = v >= 0 ? '+' : ''; fiiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; fiiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); } else { fiiEl.textContent = 'Awaiting NSE EOD'; fiiEl.className = 'mv'; } }
-    if (diiEl) { if (Number.isFinite(today.dii_net)) { const v = today.dii_net; const sign = v >= 0 ? '+' : ''; diiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr'; diiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn'); } else { diiEl.textContent = 'Awaiting NSE EOD'; diiEl.className = 'mv'; } }
+    if (fiiEl) {
+      if (today.dataAvailable === false) {
+        fiiEl.textContent = 'Data unavailable';
+        fiiEl.className = 'mv';
+      } else if (Number.isFinite(today.fii_net)) {
+        const v = today.fii_net; const sign = v >= 0 ? '+' : '';
+        fiiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr';
+        fiiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn');
+      } else {
+        fiiEl.textContent = 'Awaiting NSE EOD';
+        fiiEl.className = 'mv';
+      }
+    }
+    if (diiEl) {
+      if (today.dataAvailable === false) {
+        diiEl.textContent = 'Data unavailable';
+        diiEl.className = 'mv';
+      } else if (Number.isFinite(today.dii_net)) {
+        const v = today.dii_net; const sign = v >= 0 ? '+' : '';
+        diiEl.textContent = sign + '₹' + Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }) + ' Cr';
+        diiEl.className = 'mv ' + (v >= 0 ? 'up' : 'dn');
+      } else {
+        diiEl.textContent = 'Awaiting NSE EOD';
+        diiEl.className = 'mv';
+      }
+    }
   } catch (e) { console.warn('FII/DII processing failed:', e.message); }
 }
 
 function animateCollection(selector, options = {}) {
   const nodes = document.querySelectorAll(selector);
-  nodes.forEach(n => { n.style.opacity = '1'; n.style.transform = 'none'; });
+  const stagger = options.stagger || 0.04;
+  nodes.forEach((n, i) => {
+    n.style.animation = 'none';
+    n.style.opacity = '0';
+    n.style.transform = options.x ? `translateX(${options.x}px)` : options.y ? `translateY(${options.y}px)` : 'none';
+    void n.offsetWidth;
+    n.style.transition = `opacity 0.25s ease ${i * stagger}s, transform 0.25s ease ${i * stagger}s`;
+    n.style.opacity = '1';
+    n.style.transform = 'none';
+  });
 }
 
 // FOCUS MODE
@@ -2790,8 +2867,70 @@ function applyDalalFocusMode() {
 function toggleDalalFocusMode(force) {
   dalalFocusMode = typeof force === 'boolean' ? force : !dalalFocusMode;
   applyDalalFocusMode();
+  if (dalalFocusMode) {
+    if (activeIdx < 0 && currentRP !== 'sop' && currentRP !== 'advice') {
+      switchRP('detail');
+    }
+  }
 }
 window.toggleDalalFocusMode = toggleDalalFocusMode;
+
+function updateSessionNarrative() {
+  const textEl = document.getElementById('sn-text');
+  const dotEl = document.getElementById('sn-dot');
+  const tsEl = document.getElementById('sn-ts');
+  if (!textEl || !dotEl) return;
+
+  const niftyQuote = dashStore?.quotes?.['NIFTY:NSE'];
+  const vix = document.getElementById('mini-vix-val')?.textContent || '--';
+  const fiiEl = document.getElementById('m-fii');
+  const fiiText = fiiEl?.textContent || '';
+
+  if (!niftyQuote) {
+    textEl.textContent = 'Connecting to market data...';
+    return;
+  }
+
+  const pct = Number(niftyQuote.percent_change || 0);
+  const price = Number(niftyQuote.price || 0);
+  const vixNum = parseFloat(vix);
+  const isVolatile = Number.isFinite(vixNum) && vixNum > 18;
+  const isBull = pct > 0.3;
+  const isBear = pct < -0.3;
+
+  const niftyPart = `Nifty ${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(2)}% at ${price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  const vixPart = Number.isFinite(vixNum) ? `· VIX ${vixNum.toFixed(1)}${isVolatile ? ' (elevated)' : ''}` : '';
+  const fiiPart = fiiText && fiiText !== 'Awaiting NSE EOD' ? `· FII ${fiiText}` : '';
+
+  let context = '';
+  if (isVolatile && isBear) context = ' — caution advised';
+  else if (isBull && !isVolatile) context = ' — constructive tape';
+  else if (isBear) context = ' — selling pressure';
+
+  textEl.textContent = `${niftyPart} ${vixPart} ${fiiPart}${context}`.trim().replace(/\s+/g, ' ');
+  dotEl.className = 'sn-dot ' + (isVolatile ? 'volatile' : isBull ? 'bull' : isBear ? 'bear' : '');
+
+  if (tsEl) {
+    const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    tsEl.textContent = now + ' IST';
+  }
+}
+
+function applyAmbientMarketState() {
+  const bb = document.getElementById('bb');
+  if (!bb) return;
+  const niftyQuote = dashStore?.quotes?.['NIFTY:NSE'];
+  const vixText = document.getElementById('mini-vix-val')?.textContent || '';
+  const vixNum = parseFloat(vixText);
+  const pct = Number(niftyQuote?.percent_change || 0);
+  const isVolatile = Number.isFinite(vixNum) && vixNum > 18;
+  const isBull = pct > 0.5;
+  const isBear = pct < -0.5;
+  bb.classList.remove('market-bull', 'market-bear', 'market-volatile');
+  if (isVolatile) bb.classList.add('market-volatile');
+  else if (isBull) bb.classList.add('market-bull');
+  else if (isBear) bb.classList.add('market-bear');
+}
 
 // ── LAYOUT SAVE/RESTORE ──
 function saveLayout() { localStorage.setItem('dw-layout', JSON.stringify({ cat: currentCat, rp: currentRP, ticker: currentTicker })); }

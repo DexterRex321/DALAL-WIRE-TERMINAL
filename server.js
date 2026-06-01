@@ -882,6 +882,7 @@ async function getFiiDiiData() {
     dii_sell: result.dii[0]?.sell ?? 0,
     dii_net:  result.dii[0]?.net  ?? 0,
     date:     result.fii[0]?.date || result.dii[0]?.date || '',
+    dataAvailable: result.fii.length > 0 || result.dii.length > 0,
   };
   // Freshness: FII/DII data is always EOD — never show as LIVE
   result.status = buildStatus('EOD', 'NSE fiidiiTradeReact', {
@@ -1067,9 +1068,9 @@ async function buildDynamicCompare(aKey, bKey) {
     err.statusCode = 400;
     throw err;
   }
-  const cacheKey = `compare_${aKey}_${bKey}`;
+  const cacheKey = `compare|${aKey}|${bKey}`;
   if (isFresh(cacheKey, TTL.COMPARE)) return getCache(cacheKey).data;
-  const reverseKey = `compare_${bKey}_${aKey}`;
+  const reverseKey = `compare|${bKey}|${aKey}`;
   if (isFresh(reverseKey, TTL.COMPARE)) {
     const reversed = getCache(reverseKey).data;
     const out = {
@@ -1135,7 +1136,7 @@ app.get('/api/compare', async (req, res) => {
     logEndpointError('COMPARE', e);
     const a = String(req.query.a || '').toUpperCase();
     const b = String(req.query.b || '').toUpperCase();
-    const stale = getCache(`compare_${a}_${b}`) || getCache(`compare_${b}_${a}`);
+    const stale = getCache(`compare|${a}|${b}`) || getCache(`compare|${b}|${a}`);
     if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
     res.status(e.statusCode || 500).json(structuredEndpointError(e.statusCode ? e.message : 'Compare data unavailable'));
   }
@@ -1143,13 +1144,14 @@ app.get('/api/compare', async (req, res) => {
 
 app.get('/api/compare/:pair', async (req, res) => {
   setApiCacheHeaders(res, 30, 30);
+  const pairSlug = String(req.params.pair || '').toLowerCase();
+  const pairMap = {
+    'fii-nifty': ['FII', 'NIFTY'],
+    'vix-nifty': ['INDIAVIX', 'NIFTY'],
+    'bank-nifty': ['BANKNIFTY', 'NIFTY'],
+  };
+  const keys = pairMap[pairSlug];
   try {
-    const pairMap = {
-      'fii-nifty': ['FII', 'NIFTY'],
-      'vix-nifty': ['INDIAVIX', 'NIFTY'],
-      'bank-nifty': ['BANKNIFTY', 'NIFTY'],
-    };
-    const keys = pairMap[String(req.params.pair || '').toLowerCase()];
     if (!keys) {
       const err = new Error('Invalid compare pair');
       err.statusCode = 400;
@@ -1158,7 +1160,7 @@ app.get('/api/compare/:pair', async (req, res) => {
     res.json(await buildDynamicCompare(keys[0], keys[1]));
   } catch (e) {
     logEndpointError('COMPARE', e);
-    const stale = getCache(`compare_${String(req.params.pair || '').toLowerCase()}`);
+    const stale = keys ? (getCache(`compare|${keys[0]}|${keys[1]}`) || getCache(`compare|${keys[1]}|${keys[0]}`)) : null;
     if (stale) return res.json({ ...stale.data, stale: true, freshness: 'FALLBACK' });
     res.status(e.statusCode || 500).json(structuredEndpointError(e.statusCode ? e.message : 'Compare data unavailable'));
   }
@@ -1196,9 +1198,16 @@ async function buildMacroContext() {
       badge = signal === 'headwind' ? 'DOLLAR UP' : signal === 'tailwind' ? 'DOLLAR SOFT' : 'FLAT';
       implication = signal === 'headwind' ? 'Dollar firmness can pressure EM flows.' : signal === 'tailwind' ? 'Dollar softness helps EM risk.' : 'Dollar impulse is muted.';
     } else if (key === 'gsec') {
-      signal = q.percent_change > 0.3 ? 'headwind' : q.percent_change < -0.3 ? 'tailwind' : 'neutral';
-      badge = signal === 'headwind' ? 'YIELD UP' : signal === 'tailwind' ? 'YIELD EASE' : 'STEADY';
-      implication = signal === 'headwind' ? 'Higher yields challenge equity duration.' : signal === 'tailwind' ? 'Lower yields support valuation comfort.' : 'Rates are steady.';
+      const isProxy = q.proxy === true || String(q.source || '').includes('proxy');
+      if (isProxy) {
+        signal = 'neutral';
+        badge = 'PROXY';
+        implication = 'G-Sec data unavailable — using US 10Y as proxy. Signal disabled.';
+      } else {
+        signal = q.percent_change > 0.3 ? 'headwind' : q.percent_change < -0.3 ? 'tailwind' : 'neutral';
+        badge = signal === 'headwind' ? 'YIELD UP' : signal === 'tailwind' ? 'YIELD EASE' : 'STEADY';
+        implication = signal === 'headwind' ? 'Higher yields challenge equity duration.' : signal === 'tailwind' ? 'Lower yields support valuation comfort.' : 'Rates are steady.';
+      }
     }
     cards[key] = { ...q, signal, badge, implication };
   });
@@ -1354,7 +1363,8 @@ async function buildSopData() {
   const overnightBias = overnightAvg > 0.15 ? 'positive' : overnightAvg < -0.15 ? 'negative' : 'neutral';
   const fiiToday = toFiniteNumber(fiiDii?.today?.fii_net, fiiDii?.fii?.[0]?.net) ?? 0;
   const fiiYesterday = toFiniteNumber(fiiDii?.fii?.[1]?.net) ?? 0;
-  const valuationLabel = niftyPrice > 22000 && niftyPct > 0 ? 'STRETCHED' : niftyPrice < 18000 ? 'ATTRACTIVE' : 'FAIR';
+  // Price-level proxy only — not based on PE/PB. Update thresholds periodically.
+  const valuationLabel = niftyPrice > 24500 ? 'STRETCHED' : niftyPrice < 20000 ? 'ATTRACTIVE' : 'FAIR';
 
   const out = {
     nifty: {
@@ -2503,8 +2513,11 @@ function extractEntities(text) {
       const before = idx === 0 ? '' : t[idx - 1];
       const after = idx + key.length >= t.length ? '' : t[idx + key.length];
       const isAlphanumeric = (c) => /[a-z0-9]/.test(c);
+      const strictBoundary = key.length <= 3;
+      const validBefore = strictBoundary ? (before === '' || before === ' ') : !isAlphanumeric(before);
+      const validAfter = strictBoundary ? (after === '' || after === ' ' || after === ',') : !isAlphanumeric(after);
       
-      if (!isAlphanumeric(before) && !isAlphanumeric(after)) {
+      if (validBefore && validAfter) {
         matched.set(entity.symbol, entity);
         break;
       }
@@ -3407,7 +3420,6 @@ if (!IS_VERCEL) {
       console.log('[BOOT] Cache warm complete');
     }, 5_000);
 
-    setTimeout(warmAllNewsCategories, 30_000);
     setInterval(() => {
       const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
       const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();

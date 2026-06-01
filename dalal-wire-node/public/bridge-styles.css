@@ -367,5 +367,13 @@ body {
   .main-grid {
     grid-template-columns: 1fr;
     padding: 20px;
+    /* Task 6.2: bottom padding so last card clears nav widget */
+    padding-bottom: 72px;
+  }
+  /* Task 6.2: center nav widget on mobile, prevent overlap */
+  #nav-widget {
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
   }
 }
