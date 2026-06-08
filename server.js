@@ -2333,7 +2333,14 @@ function scoreRelevance(text, cat) {
   return (CAT_KEYWORDS[cat] || []).filter(k => t.includes(k)).length;
 }
 
-function parseRssDate(str) { if (!str) return new Date(0); try { return new Date(str); } catch { return new Date(0); } }
+function parseRssDate(str) {
+  if (!str) return null;
+  try {
+    const d = new Date(str);
+    if (isNaN(d.getTime()) || d.getFullYear() < 2020) return null;
+    return d;
+  } catch { return null; }
+}
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -2542,9 +2549,10 @@ async function fetchCategoryNews(cat) {
   results.forEach(r => { if (r.status === 'fulfilled') allItems = allItems.concat(r.value); });
 
   let processed = allItems.map(item => {
-    const parsedTs = parseRssDate(item.pubDate).getTime();
-    const ageMs = Date.now() - parseRssDate(item.pubDate).getTime();
-    const isBreaking = ageMs < 15 * 60 * 1000;
+    const _rssDate = parseRssDate(item.pubDate);
+    const parsedTs = _rssDate ? _rssDate.getTime() : 0;
+    const ageMs = parsedTs > 0 ? Date.now() - parsedTs : Number.MAX_SAFE_INTEGER;
+    const isBreaking = parsedTs > 0 && ageMs < 15 * 60 * 1000;
     const ageHours = (Date.now() - parsedTs) / (1000 * 60 * 60);
     const entities = extractEntities(item.title + ' ' + item.description);
     const baseScore = scoreRelevance(item.title + ' ' + item.description, cat);
@@ -2574,6 +2582,13 @@ async function fetchCategoryNews(cat) {
     };
   });
 
+  // Age filter: drop items older than 72h. Keep all if <5 fresh (weekend gap).
+  const _maxNewsAge = 72 * 60 * 60 * 1000;
+  const _freshItems = processed.filter(item =>
+    item.parsedTs === 0 || (Date.now() - item.parsedTs) < _maxNewsAge
+  );
+  if (_freshItems.length >= 5) processed = _freshItems;
+
   // Step 1: Exact duplicate removal
   const exactSeen = new Set();
   processed = processed.filter(item => {
@@ -2600,7 +2615,10 @@ async function fetchCategoryNews(cat) {
       let shared = 0;
       for (const w of wordsJ) { if (wordsI.has(w)) shared++; }
       
-      if (shared >= 4) {
+      const _overlapRatio = Math.min(wordsI.size, wordsJ.length) > 0
+        ? shared / Math.min(wordsI.size, wordsJ.length) : 0;
+      const _bothLong = processed[i].title.length > 50 && processed[j].title.length > 50;
+      if (_bothLong && shared >= 5 && _overlapRatio >= 0.65) {
          const itemI = processed[i];
          const itemJ = processed[j];
          const timeDiff = Math.abs(itemI.parsedTs - itemJ.parsedTs) / (1000 * 60 * 60);
@@ -2646,7 +2664,9 @@ async function fetchCategoryNews(cat) {
     isBreaking: item.isBreaking,
     enrichedScore: item.enrichedScore + (item.isBreaking ? 10 : 0),
     sourceRank: item.sourceRank,
-    pubDate:   item.pubDate,
+    pubDate:    item.pubDate || '',
+    pubDateTs:  item.parsedTs || 0,
+    hasPubDate: (item.parsedTs || 0) > 0,
     freshness: 'RSS',
   }));
 }

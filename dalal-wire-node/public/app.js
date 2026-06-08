@@ -1156,6 +1156,233 @@ function renderFearGreed() {
 // ── HEADLINES ──
 function tagHtml(s) { return s === 'bull' ? '<span class="ntag t-bull">BULL</span>' : s === 'bear' ? '<span class="ntag t-bear">BEAR</span>' : '<span class="ntag t-watch">WATCH</span>'; }
 
+function fmtNewsDateOnly(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-IN', {
+    month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata',
+  });
+}
+
+function fmtNewsTime(pubDate, pubDateTs) {
+  const ts = pubDateTs || (pubDate ? new Date(pubDate).getTime() : 0);
+  if (!ts || ts < new Date('2020-01-01').getTime()) return '';
+  const ageMs = Date.now() - ts;
+  if (ageMs < 0) return 'just now';
+  const ageMin = Math.floor(ageMs / 60000);
+  const ageHr  = Math.floor(ageMs / 3600000);
+  const ageDays = Math.floor(ageMs / 86400000);
+  if (ageMin < 2)  return 'just now';
+  if (ageMin < 60) return `${ageMin}m ago`;
+  if (ageHr < 24)  return `${ageHr}h ago`;
+  if (ageDays < 3) return `${ageDays}d ago · ${fmtNewsDateOnly(ts)}`;
+  return fmtNewsDateOnly(ts);
+}
+
+function isNewsStale(pubDateTs) {
+  if (!pubDateTs || pubDateTs === 0) return false;
+  return (Date.now() - pubDateTs) > 8 * 60 * 60 * 1000;
+}
+
+function maybeShowStaleBanner() {
+  const existing = document.getElementById('news-stale-banner');
+  if (existing) existing.remove();
+  if (!currentStories.length) return;
+  const staleCount = currentStories.filter(s => isNewsStale(s.pubDateTs)).length;
+  const cached = newsCache[currentCat];
+  const cacheAgeMin = cached ? Math.round((Date.now() - cached.ts) / 60000) : 0;
+  const majorityStale = staleCount > currentStories.length * 0.5;
+  const cacheOld = cacheAgeMin > 15;
+  if (!majorityStale && !cacheOld) return;
+  const banner = document.createElement('div');
+  banner.id = 'news-stale-banner';
+  banner.className = 'news-stale-banner';
+  banner.innerHTML = majorityStale
+    ? `⚠ Stories may be older than 8h <button onclick="refreshNews()">↻ REFRESH</button>`
+    : `Feed cached ${cacheAgeMin}m ago <button onclick="refreshNews()">↻ REFRESH</button>`;
+  const hlList = document.getElementById('hl-list');
+  if (hlList) hlList.insertAdjacentElement('beforebegin', banner);
+}
+
+const NEWS_STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'after', 'amid', 'over', 'near', 'this', 'that', 'than', 'will', 'would', 'could', 'should', 'have', 'has', 'had', 'are', 'was', 'were', 'into', 'across', 'india', 'indian']);
+
+function getStoryTs(story) {
+  return story?.pubDateTs || (story?.pubDate ? new Date(story.pubDate).getTime() : 0) || 0;
+}
+
+function getStoryAgeHours(story) {
+  const ts = getStoryTs(story);
+  if (!ts) return Number.POSITIVE_INFINITY;
+  return Math.max(0, Date.now() - ts) / 3600000;
+}
+
+function normalizeStoryText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getHeadlineTokens(text) {
+  return normalizeStoryText(text)
+    .split(' ')
+    .filter(Boolean)
+    .filter(token => token.length > 2 && !NEWS_STOPWORDS.has(token));
+}
+
+function getStoryEntities(story) {
+  return Array.isArray(story?.entities) ? story.entities : [];
+}
+
+function getStoryEntityLabels(story) {
+  return getStoryEntities(story).map(entity => entity.label).filter(Boolean);
+}
+
+function getStoryTags(story) {
+  return Array.isArray(story?.tags) ? story.tags.filter(Boolean) : [];
+}
+
+function inferStoryType(story) {
+  const text = `${story?.headline || ''} ${story?.body || ''} ${getStoryTags(story).join(' ')}`.toLowerCase();
+  const labels = getStoryEntityLabels(story).join(' ').toLowerCase();
+  if (/\b(nifty|sensex|bank nifty|banknifty|index|indices|market breadth|advance decline)\b/.test(text)) return 'index';
+  if (/\b(fii|dii|rbi|repo|inflation|cpi|wpi|iip|gdp|rupee|usd\/inr|yield|g-sec|bond|crude|oil|gold|fiscal|budget|liquidity)\b/.test(text)) return 'macro';
+  if (/\b(sp500|s&p|nasdaq|dow|fed|treasury|dxy|hang seng|nikkei|europe|wall street|brent|wti|strait of hormuz|iran|israel|us\b)\b/.test(text)) return 'global';
+  if (getStoryEntities(story).some(entity => entity.type === 'stock') || /\b(shares|stock|stocks|results|guidance|order win|stake|ipo|target price|brokerage)\b/.test(text + ' ' + labels)) return 'stock';
+  return currentCat === 'global' ? 'global' : 'macro';
+}
+
+function storyTypeLabel(type) {
+  return ({
+    index: 'Index-moving',
+    stock: 'Stock-specific',
+    macro: 'Macro / policy',
+    global: 'Global spillover',
+  })[type] || 'Market signal';
+}
+
+function computeStoryImpact(story) {
+  const score = Number(story?.enrichedScore || 0);
+  const ageHours = getStoryAgeHours(story);
+  const freshnessBoost = ageHours <= 1 ? 2.4 : ageHours <= 4 ? 1.4 : ageHours <= 24 ? 0.7 : 0;
+  const typeBoost = ({ index: 1.5, macro: 1.1, global: 0.9, stock: 0.8 })[inferStoryType(story)] || 0;
+  const entityBoost = Math.min(getStoryEntities(story).length, 3) * 0.3;
+  const breakingBoost = story?.isBreaking ? 3.5 : 0;
+  return score + freshnessBoost + typeBoost + entityBoost + breakingBoost;
+}
+
+function buildStoryWhyItMatters(story, storyType) {
+  const text = `${story?.headline || ''} ${story?.body || ''}`.toLowerCase();
+  const labels = getStoryEntityLabels(story).slice(0, 3);
+  if (/\bcrude|oil|hormuz\b/.test(text)) return 'Watch inflation pressure, rupee sensitivity, and oil-linked sectors.';
+  if (/\bfii|dii|outflow|inflow\b/.test(text)) return 'Useful for reading liquidity, risk appetite, and index follow-through.';
+  if (/\brbi|repo|yield|g-sec|bond\b/.test(text)) return 'Sets the tone for rates, financials, and duration-sensitive sectors.';
+  if (/\brupee|usd\/inr|dxy\b/.test(text)) return 'Matters for import costs, IT exporters, and foreign-flow sentiment.';
+  if (storyType === 'index') return 'Good read-through for opening tone, sector breadth, and index momentum.';
+  if (storyType === 'global') return 'Signals possible spillover into Indian equities, commodities, and risk appetite.';
+  if (storyType === 'stock' && labels.length) return `Puts immediate focus on ${labels.join(', ')}.`;
+  if (storyType === 'macro') return 'Sets market context more than a single-stock reaction.';
+  return 'Useful as background context for the current market tape.';
+}
+
+function buildAffectedList(story) {
+  const entities = getStoryEntityLabels(story).slice(0, 4);
+  if (entities.length) return entities;
+  return getStoryTags(story).slice(0, 4);
+}
+
+function buildStorySignature(story) {
+  const entityKey = getStoryEntityLabels(story).slice(0, 2).join('|').toLowerCase();
+  const tokenKey = getHeadlineTokens(story?.headline || '').slice(0, 6).join('|');
+  return `${inferStoryType(story)}|${entityKey}|${tokenKey}`;
+}
+
+function getTokenOverlap(aTokens, bTokens) {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const aSet = new Set(aTokens);
+  let shared = 0;
+  bTokens.forEach(token => { if (aSet.has(token)) shared++; });
+  return shared / Math.min(aTokens.length, bTokens.length);
+}
+
+function areStoriesRelated(a, b) {
+  const aSig = buildStorySignature(a);
+  const bSig = buildStorySignature(b);
+  if (aSig && aSig === bSig) return true;
+  const overlap = getTokenOverlap(getHeadlineTokens(a?.headline || ''), getHeadlineTokens(b?.headline || ''));
+  const sharedEntity = getStoryEntityLabels(a).some(label => getStoryEntityLabels(b).includes(label));
+  const sameType = inferStoryType(a) === inferStoryType(b);
+  const closeInTime = Math.abs(getStoryTs(a) - getStoryTs(b)) <= 36 * 3600000;
+  return sameType && (overlap >= 0.72 || (sharedEntity && overlap >= 0.42 && closeInTime));
+}
+
+function clusterStories(stories) {
+  const primaries = [];
+  const used = new Set();
+  stories.forEach((story, index) => {
+    if (used.has(index)) return;
+    const primary = { ...story, relatedStories: [] };
+    for (let j = index + 1; j < stories.length; j++) {
+      if (used.has(j)) continue;
+      if (areStoriesRelated(primary, stories[j])) {
+        primary.relatedStories.push(stories[j]);
+        used.add(j);
+      }
+    }
+    primary.relatedCount = primary.relatedStories.length;
+    if (primary.relatedCount) primary.enrichedScore = Number(primary.enrichedScore || 0) + Math.min(primary.relatedCount, 3) * 0.35;
+    primaries.push(primary);
+  });
+  return primaries;
+}
+
+function assignStorySection(story) {
+  const impact = story.presentationImpact ?? computeStoryImpact(story);
+  const ageHours = getStoryAgeHours(story);
+  if (story.isBreaking || (impact >= 8 && ageHours <= 6)) return 'now';
+  if (impact >= 5 || ageHours <= 30 || story.relatedCount > 0) return 'important';
+  return 'background';
+}
+
+function sectionLabel(section) {
+  return ({
+    now: 'Now',
+    important: 'Important but older',
+    background: 'Background',
+  })[section] || 'Background';
+}
+
+function decorateStoriesForPresentation(stories) {
+  const decorated = stories.map(story => {
+    const storyType = inferStoryType(story);
+    const ts = getStoryTs(story);
+    const impact = computeStoryImpact(story);
+    return {
+      ...story,
+      pubDateTs: ts,
+      hasPubDate: ts > 0,
+      presentationType: storyType,
+      presentationTypeLabel: storyTypeLabel(storyType),
+      presentationImpact: impact,
+      whyMatters: buildStoryWhyItMatters(story, storyType),
+      affectedList: buildAffectedList(story),
+      freshnessLabel: ts ? fmtNewsTime(story.pubDate, ts) : 'time unknown',
+      absoluteDateLabel: ts ? fmtNewsDateOnly(ts) : '',
+    };
+  });
+  const clustered = clusterStories(decorated);
+  const sectionOrder = { now: 0, important: 1, background: 2 };
+  clustered.forEach(story => {
+    story.presentationSection = assignStorySection(story);
+    story.presentationSectionLabel = sectionLabel(story.presentationSection);
+  });
+  return clustered.sort((a, b) => {
+    const sectionDiff = sectionOrder[a.presentationSection] - sectionOrder[b.presentationSection];
+    if (sectionDiff !== 0) return sectionDiff;
+    return (b.presentationImpact || 0) - (a.presentationImpact || 0);
+  });
+}
+
 function setHeadlinesEmptyState(title, detail = '') { headlinesEmptyState = { title, detail }; }
 
 let newsWatchlistFilter = { active: false, symbols: [] };
@@ -1193,21 +1420,20 @@ function applyNewsIntelligence(stories) {
        else group2.push(s);
      });
      
-     group1.sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
-     group2.sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
+     group1.sort((a, b) => computeStoryImpact(b) - computeStoryImpact(a));
+     group2.sort((a, b) => computeStoryImpact(b) - computeStoryImpact(a));
      return [...group1, ...group2];
   } else {
      stories.forEach(s => s.watchlistMatch = false);
-     return [...stories].sort((a, b) => (b.enrichedScore || 0) - (a.enrichedScore || 0));
+     return [...stories].sort((a, b) => computeStoryImpact(b) - computeStoryImpact(a));
   }
 }
 
 function getStoryTier(story) {
-  const ageMs = Date.now() - new Date(story.pubDate).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
+  const ageHours = getStoryAgeHours(story);
   if (story.isBreaking) return 'tier-1';
-  if (story.enrichedScore >= 6 && ageHours < 2) return 'tier-2';
-  if (ageHours > 4) return 'tier-4';
+  if ((story.presentationImpact || story.enrichedScore || 0) >= 8 && ageHours < 6) return 'tier-2';
+  if (story.presentationSection === 'background' || ageHours > 18) return 'tier-4';
   return 'tier-3';
 }
 
@@ -1231,30 +1457,56 @@ function renderHeadlines(resetScroll = false) {
     </div>`;
     return;
   }
-  
-  currentStories = applyNewsIntelligence(currentStories);
-  
-  countEl.textContent = currentStories.length + ' STORIES';
-  currentStories.forEach((s, i) => {
-    const d = document.createElement('div'); d.className = 'nl' + (i === activeIdx ? ' active' : '') + (s.watchlistMatch ? ' watchlist-match' : '');
-    d.dataset.tier = getStoryTier(s);
-    d.dataset.sentiment = s.sentiment;
-    const timeStr = s.pubDate ? new Date(s.pubDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST' : '';
-    const srcDisplay = s.source ? `<span class="nl-source-name">${escapeHtml(s.via ? s.source : s.source)}</span>` : '';
-    
-    let wlBadge = s.watchlistMatch ? `<span class="nl-watchlist-badge">★ WATCHLIST</span>` : '';
-    
-    let entitiesHtml = '';
-    if (s.entities && s.entities.length > 0) {
-      entitiesHtml = `<div class="nl-entities">` + 
-        s.entities.slice(0, 4).map(e => `<span class="nl-entity-tag type-${escapeHtml(e.type)}">${escapeHtml(e.label)}</span>`).join('') + 
-        `</div>`;
-    }
-    
-    const breaking = '<span class="ntag" style="background:#1a0000;color:#ff3333;border:1px solid #330000;animation:blink-dim 1.5s infinite">BREAKING</span>';
-    d.innerHTML = `<div class="nl-meta">${s.isBreaking ? breaking : tagHtml(s.sentiment)}${wlBadge}<span class="nl-time">${escapeHtml(timeStr)}</span>${srcDisplay}</div><div class="nl-hl">${escapeHtml(cleanNewsText(s.headline))}</div>${entitiesHtml}`;
-    d.addEventListener('click', () => showDetail(i)); list.appendChild(d);
+
+  currentStories = decorateStoriesForPresentation(applyNewsIntelligence(currentStories));
+  const nowCount = currentStories.filter(story => story.presentationSection === 'now').length;
+  const groupedStories = new Map([['now', []], ['important', []], ['background', []]]);
+  currentStories.forEach(story => groupedStories.get(story.presentationSection)?.push(story));
+  countEl.textContent = `${currentStories.length} STORIES${nowCount ? ` · ${nowCount} NOW` : ''}`;
+
+  ['now', 'important', 'background'].forEach(section => {
+    const stories = groupedStories.get(section) || [];
+    if (!stories.length) return;
+
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'news-section';
+    sectionEl.innerHTML = `<div class="news-section-head"><span class="news-section-title">${escapeHtml(sectionLabel(section))}</span><span class="news-section-count">${stories.length}</span></div>`;
+    list.appendChild(sectionEl);
+
+    stories.forEach(s => {
+      const storyIndex = currentStories.indexOf(s);
+      const staleNews = isNewsStale(s.pubDateTs);
+      const d = document.createElement('div');
+      d.className = 'nl' + (storyIndex === activeIdx ? ' active' : '') + (s.watchlistMatch ? ' watchlist-match' : '') + (staleNews ? ' nl-stale' : '');
+      d.dataset.tier = getStoryTier(s);
+      d.dataset.sentiment = s.sentiment;
+      d.dataset.storyType = s.presentationType;
+
+      const srcDisplay = s.source ? `<span class="nl-source-name">${escapeHtml(s.source)}</span>` : '';
+      const timeTag = s.freshnessLabel ? `<span class="nl-time">${escapeHtml(s.freshnessLabel)}</span>` : `<span class="nl-time nl-time-unknown">time unknown</span>`;
+      const staleTag = staleNews ? `<span class="nl-stale-tag">OLD</span>` : '';
+      const typeTag = `<span class="nl-type-tag">${escapeHtml(s.presentationTypeLabel)}</span>`;
+      const relatedTag = s.relatedCount ? `<span class="nl-related-tag">${s.relatedCount} RELATED</span>` : '';
+      const watchlistTag = s.watchlistMatch ? `<span class="nl-watchlist-badge">WATCHLIST</span>` : '';
+      const whyHtml = s.whyMatters ? `<div class="nl-why">${escapeHtml(s.whyMatters)}</div>` : '';
+      const impactHtml = s.affectedList?.length
+        ? `<div class="nl-impact-row">${s.affectedList.slice(0, 3).map(label => `<span class="nl-impact-chip">${escapeHtml(label)}</span>`).join('')}</div>`
+        : '';
+
+      let entitiesHtml = '';
+      if (s.entities && s.entities.length > 0) {
+        entitiesHtml = `<div class="nl-entities">` +
+          s.entities.slice(0, 3).map(e => `<span class="nl-entity-tag type-${escapeHtml(e.type)}">${escapeHtml(e.label)}</span>`).join('') +
+          `</div>`;
+      }
+
+      const breaking = '<span class="ntag ntag-breaking">BREAKING</span>';
+      d.innerHTML = `<div class="nl-meta">${s.isBreaking ? breaking : tagHtml(s.sentiment)}${typeTag}${watchlistTag}${timeTag}${staleTag}${relatedTag}${srcDisplay}</div><div class="nl-hl">${escapeHtml(cleanNewsText(s.headline))}</div>${whyHtml}${impactHtml}${entitiesHtml}`;
+      d.addEventListener('click', () => showDetail(storyIndex));
+      list.appendChild(d);
+    });
   });
+  maybeShowStaleBanner();
   animateCollection('#hl-list .nl', { x: -10, y: 10, stagger: 0.035, duration: 0.32 });
 }
 
@@ -1268,12 +1520,43 @@ function showDetail(i) {
   if (!emptyEl || !bodyEl || !srcEl || !tagsEl || !headEl || !textEl) return;
   if (stateRoot) stateRoot.style.display = 'none';
   emptyEl.style.display = 'none'; bodyEl.style.display = 'block';
-  srcEl.textContent = s.via ? `${s.source || 'NEWSFEED'} via ${s.via}` : (s.source || 'NEWSFEED'); tagsEl.innerHTML = (s.tags || []).map(t => `<span class="db-tag">${escapeHtml(t)}</span>`).join(' ') + ' ' + tagHtml(s.sentiment);
+  const freshness = s.hasPubDate ? `${s.freshnessLabel}${s.absoluteDateLabel && !String(s.freshnessLabel).includes(s.absoluteDateLabel) ? ` · ${s.absoluteDateLabel}` : ''}` : 'time unknown';
+  const affected = s.affectedList?.length ? s.affectedList.slice(0, 4).join(', ') : 'Broad market context';
+  srcEl.textContent = s.via ? `${s.source || 'NEWSFEED'} via ${s.via}` : (s.source || 'NEWSFEED');
+  tagsEl.innerHTML = [
+    `<span class="db-tag db-tag-type">${escapeHtml(s.presentationTypeLabel || storyTypeLabel(inferStoryType(s)))}</span>`,
+    `<span class="db-tag db-tag-freshness">${escapeHtml(s.isBreaking ? 'Breaking now' : freshness)}</span>`,
+    ...(s.tags || []).slice(0, 4).map(t => `<span class="db-tag">${escapeHtml(t)}</span>`),
+  ].join(' ') + ' ' + tagHtml(s.sentiment);
   headEl.textContent = cleanNewsText(s.headline);
   const body = cleanNewsText(s.body || '');
   const summary = body ? body.split(/[.!?]+/).map(x => x.trim()).filter(Boolean).slice(0, 2).join('. ') + '.' : 'Summary unavailable.';
-  let bodyHtml = `<p class="db-summary"><b>Summary:</b> ${escapeHtml(summary)}</p>`;
+  const relatedHtml = s.relatedStories?.length
+    ? `<div class="db-related"><div class="db-section-label">RELATED</div>${s.relatedStories.slice(0, 4).map(item => `<div class="db-related-item">${escapeHtml(cleanNewsText(item.headline || ''))}</div>`).join('')}</div>`
+    : '';
+  const contextCards = `
+    <div class="db-context-grid">
+      <div class="db-context-card">
+        <div class="db-section-label">WHAT HAPPENED</div>
+        <div class="db-context-copy">${escapeHtml(summary)}</div>
+      </div>
+      <div class="db-context-card">
+        <div class="db-section-label">WHY IT MATTERS</div>
+        <div class="db-context-copy">${escapeHtml(s.whyMatters || 'Useful context for the current market tape.')}</div>
+      </div>
+      <div class="db-context-card">
+        <div class="db-section-label">WHO IS AFFECTED</div>
+        <div class="db-context-copy">${escapeHtml(affected)}</div>
+      </div>
+      <div class="db-context-card">
+        <div class="db-section-label">FRESHNESS</div>
+        <div class="db-context-copy">${escapeHtml(freshness)}</div>
+      </div>
+    </div>`;
+  let bodyHtml = contextCards;
+  bodyHtml += `<p class="db-summary"><b>Market brief:</b> ${escapeHtml(summary)}</p>`;
   bodyHtml += body.split(/(?<=[.!?])\s+/).map(p => p.trim()).filter(Boolean).slice(2, 6).map(p => `<p>${escapeHtml(p)}</p>`).join('');
+  bodyHtml += relatedHtml;
   if (s.via) bodyHtml += `<p class="db-source-note">Aggregated by ${escapeHtml(s.via)}. Open the source link for the original publisher page.</p>`;
   if (s.url) bodyHtml += `<p><a href="${escapeHtml(s.url)}" class="db-read-link" target="_blank" rel="noopener">Read full article</a></p>`;
   textEl.innerHTML = bodyHtml;
@@ -1317,7 +1600,11 @@ async function fetchLiveNews(cat, useCache = true) {
     renderHeadlines(true); renderApp();
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
     const countEl = document.getElementById('hl-count');
-    if (countEl) countEl.textContent = currentStories.length ? currentStories.length + ' STORIES · LIVE RSS · ' + now : '0 STORIES · LIVE RSS';
+    const _staleCount = currentStories.filter(s => isNewsStale(s.pubDateTs)).length;
+    const _staleNote  = _staleCount > 0 && _staleCount > currentStories.length * 0.4 ? ' · SOME OLD' : '';
+    if (countEl) countEl.textContent = currentStories.length
+      ? `${currentStories.length} STORIES · ${now}${_staleNote}`
+      : '0 STORIES';
   } catch (e) {
     if (e.name === 'AbortError') return;
     console.warn('Live news failed:', e.message);
@@ -1331,7 +1618,20 @@ async function fetchLiveNews(cat, useCache = true) {
   }
 }
 
-function refreshNews() { clearTimeout(refreshNewsTimer); refreshNewsTimer = setTimeout(async () => { newsCache[currentCat] = null; try { await apiFetch('/api/news-refresh'); } catch (e) { } fetchLiveNews(currentCat, false); }, 120); }
+function refreshNews() {
+  clearTimeout(refreshNewsTimer);
+  refreshNewsTimer = setTimeout(async () => {
+    const _prevStories = [...currentStories];
+    newsCache[currentCat] = null;
+    try { await apiFetch('/api/news-refresh'); } catch {}
+    await fetchLiveNews(currentCat, false);
+    if (currentStories.length === 0 && _prevStories.length > 0) {
+      currentStories = _prevStories;
+      setHeadlinesEmptyState('Refresh failed', 'Showing previous stories. Try again in a moment.');
+      renderHeadlines();
+    }
+  }, 120);
+}
 
 function showNewsLoading() {
   sectionLoadState.news = 'loading';
@@ -1411,14 +1711,32 @@ function drawMiniSparkline(canvasId, series, line, fill) {
   ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
 }
 
+function signedPct(value) {
+  if (!Number.isFinite(value)) return '--';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+function describeMiniSeries(series, kind) {
+  if (!Array.isArray(series) || series.length < 2) return 'Spot quote only';
+  const latest = Number(series[series.length - 1]);
+  const prev = Number(series[series.length - 2]);
+  const avg = series.reduce((sum, value) => sum + Number(value || 0), 0) / series.length;
+  const movePct = prev ? ((latest - prev) / Math.abs(prev)) * 100 : 0;
+  const avgPct = avg ? ((latest - avg) / Math.abs(avg)) * 100 : 0;
+  const regime = kind === 'vix'
+    ? (avgPct > 8 ? 'risk elevated' : avgPct < -8 ? 'risk easing' : 'near recent norm')
+    : (avgPct > 0.4 ? 'yield pressure up' : avgPct < -0.4 ? 'yield easing' : 'near recent norm');
+  return `${signedPct(movePct)} vs last · ${signedPct(avgPct)} vs avg · ${regime}`;
+}
+
 function renderMiniMacroCharts() {
   const vv = miniVixSeries[miniVixSeries.length - 1]; const gv = miniGsecSeries[miniGsecSeries.length - 1];
   if (Number.isFinite(vv)) setEl('mini-vix-val', vv.toFixed(2));
   if (Number.isFinite(gv)) setEl('mini-gsec-val', gv.toFixed(3) + '%');
   const vixMeta = document.getElementById('mini-vix-meta');
   const gsecMeta = document.getElementById('mini-gsec-meta');
-  if (vixMeta && miniVixSeries.length < 3) vixMeta.textContent = vixMeta.textContent.replace(/\s*-\s*$/, '') || 'Spot quote only';
-  if (gsecMeta && miniGsecSeries.length < 3) gsecMeta.textContent = gsecMeta.textContent.replace(/\s*-\s*$/, '') || 'Spot quote only';
+  if (vixMeta) vixMeta.textContent = describeMiniSeries(miniVixSeries, 'vix');
+  if (gsecMeta) gsecMeta.textContent = describeMiniSeries(miniGsecSeries, 'gsec');
   drawMiniSparkline('mini-vix-chart', miniVixSeries, '#ff9900', 'rgba(255,153,0,.14)');
   drawMiniSparkline('mini-gsec-chart', miniGsecSeries, '#7fd5ff', 'rgba(127,213,255,.12)');
 }
@@ -1579,7 +1897,7 @@ function drawCompareChart(data) {
   chart.innerHTML = `
     <div class="compare-chart-head">
       <span class="compare-axis-label" style="color:#ff6600">● ${data.a.label}</span>
-      <span style="color:var(--dim);font-size:9px">${data.sessions} SESSIONS</span>
+      <span style="color:var(--dim);font-size:9px">${data.sessions} SESSIONS · NORMALIZED VIEW</span>
       <span class="compare-axis-label" style="color:#4a9eff">● ${data.b.label}</span>
     </div>
     <canvas id="compare-canvas" class="compare-dual-canvas" height="160"></canvas>
@@ -1851,12 +2169,18 @@ function renderCompare(data) {
   const meta = document.getElementById('compare-meta');
   const badgeClass = data.divergence === 'DIVERGING' ? 'is-diverging' : data.divergence === 'CONVERGING' ? 'is-converging' : 'is-aligned';
   const direction = data.divergence === 'DIVERGING' ? 'MOVING APART' : data.divergence === 'CONVERGING' ? 'REALIGNING' : 'MOVING TOGETHER';
-  if (meta) meta.innerHTML = `<span class="diverge-badge ${badgeClass}">${data.divergence}</span><span>${data.sessions} SESSIONS</span><span>${direction}</span>`;
+  const rows = data.aligned || [];
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const aMove = first && last && Number(first.a) ? ((Number(last.a) - Number(first.a)) / Math.abs(Number(first.a))) * 100 : 0;
+  const bMove = first && last && Number(first.b) ? ((Number(last.b) - Number(first.b)) / Math.abs(Number(first.b))) * 100 : 0;
+  const leadLabel = Math.abs(aMove) >= Math.abs(bMove) ? data.a.label : data.b.label;
+  if (meta) meta.innerHTML = `<span class="diverge-badge ${badgeClass}">${data.divergence}</span><span>${data.sessions} SESSIONS</span><span>${direction}</span><span>${data.a.label} ${signedPct(aMove)}</span><span>${data.b.label} ${signedPct(bMove)}</span><span>LEAD: ${leadLabel}</span>`;
   const table = document.getElementById('compare-table'); if (!table) return;
-  const rows = (data.aligned || []).slice(-5);
+  const recentRows = rows.slice(-5);
   let html = `<div class="compare-table-head"><span>DATE</span><span>${data.a.label}</span><span>${data.b.label}</span><span>RELATIONSHIP</span></div>`;
-  html += rows.map((row, i) => {
-    const prev = data.aligned[data.aligned.length - rows.length + i - 1];
+  html += recentRows.map((row, i) => {
+    const prev = data.aligned[data.aligned.length - recentRows.length + i - 1];
     const rel = relationshipGlyph(row, prev);
     return `<div class="compare-table-row"><span>${row.date}</span><span>${compareFmt(row.a, data.a)}</span><span>${compareFmt(row.b, data.b)}</span><span class="${rel.cls}">${rel.text}</span></div>`;
   }).join('');
