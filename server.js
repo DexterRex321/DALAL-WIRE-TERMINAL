@@ -256,6 +256,7 @@ const TTL = {
   LOCKIN:     5 * 60_000,   // 5m  — lock-in calendar
   DHAN:          30_000,    // 30s — broker portfolio data
   COMPARE:       30_000,    // 30s — comparison panels
+  FINANCIALS: 4 * 3600_000, // 4h — fundamentals data
 };
 
 function getNewsTTL() {
@@ -708,6 +709,99 @@ app.get('/api/nse/equity/:symbol', async (req, res) => {
     const stale = getCache(`nse_equity_${symbol}`);
     if (stale) return res.json({ ...stale.data, freshness: 'FALLBACK', stale: true });
     res.status(500).json(structuredEndpointError(`Equity detail unavailable for ${symbol}`));
+  }
+});
+
+// ── FINANCIALS (Yahoo fundamentalsTimeSeries) ────────────────
+function extractFtsValue(node) {
+  if (!node) return 0;
+  if (typeof node === 'number') return node;
+  if (node.reportedValue !== undefined) return node.reportedValue;
+  return 0;
+}
+
+function normalizeFtsData(series) {
+  if (!Array.isArray(series)) return [];
+  return series.map(item => ({
+    date: item.asOfDate ? item.asOfDate.substring(0, 10) : '',
+    revenue: extractFtsValue(item.totalRevenue),
+    netIncome: extractFtsValue(item.netIncome),
+    ebitda: extractFtsValue(item.ebitda),
+    operatingIncome: extractFtsValue(item.operatingIncome),
+    grossProfit: extractFtsValue(item.grossProfit),
+    totalExpenses: extractFtsValue(item.totalExpenses),
+    pretaxIncome: extractFtsValue(item.pretaxIncome),
+    eps: extractFtsValue(item.basicEPS)
+  })).sort((a, b) => a.date.localeCompare(b.date)); // Sort chronologically
+}
+
+app.get('/api/financials/:symbol', async (req, res) => {
+  setApiCacheHeaders(res, 60, 120);
+  const symbol = req.params.symbol.toUpperCase().replace('.NS', '');
+  // Ignore indices as Yahoo doesn't have fundamentals for them
+  if (NSE_INDEX_QUOTE_NAMES[`${symbol}:NSE`] || symbol.startsWith('^')) {
+    return res.status(400).json(structuredEndpointError(`Financial statements are available for individual stocks only, not indices.`));
+  }
+
+  const cacheKey = `financials_${symbol}`;
+  if (isFresh(cacheKey, TTL.FINANCIALS)) return res.json(getCache(cacheKey).data);
+
+  try {
+    const yahooSym = SYMBOLS[`${symbol}:NSE`] || SYMBOLS[symbol] || `${symbol}.NS`;
+
+    // Fetch both annual and quarterly data using module 'all'
+    const [rawAnnual, rawQuarterly] = await Promise.all([
+      yf.fundamentalsTimeSeries(yahooSym, { module: 'all', type: 'annual', period1: '2019-01-01' }).catch(() => []),
+      yf.fundamentalsTimeSeries(yahooSym, { module: 'all', type: 'quarterly', period1: '2019-01-01' }).catch(() => [])
+    ]);
+
+    const annual = [];
+    const quarterly = [];
+
+    const parseItem = (item, arr) => {
+      const dateKey = item.date ? new Date(item.date).toISOString().substring(0, 10) : null;
+      if (!dateKey) return;
+      
+      const mapped = {
+        date: dateKey,
+        revenue: item.totalRevenue || item.operatingRevenue || 0,
+        netIncome: item.netIncome || 0,
+        ebitda: item.EBITDA || item.normalizedEBITDA || 0,
+        operatingIncome: item.operatingIncome || 0,
+        grossProfit: item.grossProfit || 0,
+        totalExpenses: item.totalExpenses || item.operatingExpense || 0,
+        pretaxIncome: item.pretaxIncome || 0,
+        eps: item.basicEPS || item.dilutedEPS || 0
+      };
+      arr.push(mapped);
+    };
+
+    rawAnnual.forEach(item => parseItem(item, annual));
+    rawQuarterly.forEach(item => parseItem(item, quarterly));
+
+    annual.sort((a, b) => a.date.localeCompare(b.date));
+    quarterly.sort((a, b) => a.date.localeCompare(b.date));
+
+    if (annual.length === 0 && quarterly.length === 0) {
+      throw new Error(`Empty financial arrays for ${yahooSym}`);
+    }
+
+    const out = {
+      symbol,
+      annual,
+      quarterly,
+      source: 'Yahoo Finance',
+      freshness: 'EOD',
+      ts: new Date().toISOString()
+    };
+
+    setCache(cacheKey, out);
+    res.json(out);
+  } catch (e) {
+    logEndpointError('FINANCIALS', e);
+    const stale = getCache(`financials_${symbol}`);
+    if (stale) return res.json({ ...stale.data, freshness: 'FALLBACK', stale: true });
+    res.status(500).json(structuredEndpointError(`Financial data unavailable for ${symbol}. Yahoo Finance may not cover this company.`));
   }
 });
 

@@ -903,7 +903,7 @@ function switchRP(tab, options = {}) {
   }, 400);
 
   // Update visible right-panel module.
-  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-sop', 'rp-compare', 'rp-events'];
+  const panels = ['rp-story', 'rp-advice', 'rp-global', 'rp-heatmap', 'rp-mf', 'rp-commodities', 'rp-lockin', 'rp-feargreed', 'rp-sop', 'rp-compare', 'rp-events', 'rp-financials'];
   panels.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -921,7 +921,8 @@ function switchRP(tab, options = {}) {
     feargreed: 'rp-feargreed',
     sop: 'rp-sop',
     compare: 'rp-compare',
-    events: 'rp-events'
+    events: 'rp-events',
+    financials: 'rp-financials'
   };
 
   const activePanel = document.getElementById(panelMap[tab]);
@@ -956,6 +957,10 @@ function switchRP(tab, options = {}) {
     if (!eventsState.data) fetchEvents();
     else renderEventsPanel();
   }
+  if (tab === 'financials') {
+    const ticker = currentTicker || (appState.selectedStock ? appState.selectedStock.split(':')[0] : null);
+    if (ticker) fetchFinancials(ticker);
+  }
 
   saveLayout();
 }
@@ -988,7 +993,8 @@ function applyTicker() {
   document.getElementById('rp-ticker').value = '';
   const al = document.getElementById('advice-ticker-label'); if (al) al.textContent = 'LIVE SIGNAL - ' + v;
   updateAdviceForTicker(v);
-  switchRP('advice');
+  if (currentRP === 'financials') fetchFinancials(v);
+  else switchRP('advice');
 }
 
 async function updateAdviceForTicker(t) {
@@ -3604,3 +3610,362 @@ setInterval(() => {
   if (sopState.data || currentRP === 'sop') fetchSOPData();
 }, 60000);
 */
+
+// ── FINANCIALS PANEL ──────────────────────────────────────────────
+let financialsCache = {};
+let financialsFetching = {};
+let financialsPeriod = 'annual'; // 'annual' | 'quarterly'
+let financialsShowAllRows = false;
+let currentFinancialsHoverPeriod = null; // null means show latest
+
+async function fetchFinancials(ticker) {
+  if (!ticker) return;
+  
+  if (financialsCache[ticker]) {
+    renderFinancials(ticker);
+    return;
+  }
+  
+  if (financialsFetching[ticker]) return;
+  financialsFetching[ticker] = true;
+  
+  const contentDiv = document.getElementById('financials-content');
+  if (contentDiv) {
+    contentDiv.innerHTML = `
+      <div class="fin-loading-skel">
+        <div class="fin-skel-box"></div>
+        <div class="fin-skel-row"><div class="fin-skel-card"></div><div class="fin-skel-card"></div></div>
+      </div>
+    `;
+  }
+  
+  try {
+    const res = await apiFetch(`/api/financials/${ticker}`);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    financialsCache[ticker] = data;
+  } catch (err) {
+    if (contentDiv) {
+      contentDiv.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--red);font-size:13px">${err.message || 'Error loading financial data'}</div>`;
+    }
+  } finally {
+    financialsFetching[ticker] = false;
+  }
+  
+  if (currentRP === 'financials') {
+    const activeTicker = currentTicker || (appState.selectedStock ? appState.selectedStock.split(':')[0] : null);
+    if (activeTicker === ticker) renderFinancials(ticker);
+  }
+}
+
+function calcGrowth(current, previous) {
+  if (!previous || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+function calcCAGR(latest, earliest, years) {
+  if (!earliest || earliest <= 0 || !latest || latest <= 0 || years <= 0) return null;
+  return (Math.pow(latest / earliest, 1 / years) - 1) * 100;
+}
+
+function formatFinNum(num) {
+  if (num === null || num === undefined) return '--';
+  const n = Number(num);
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return '₹' + (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e7) return '₹' + (n / 1e7).toFixed(2) + 'Cr';
+  if (abs >= 1e5) return '₹' + (n / 1e5).toFixed(2) + 'L';
+  return '₹' + n.toLocaleString('en-IN');
+}
+
+function renderFinancials(ticker) {
+  const contentDiv = document.getElementById('financials-content');
+  if (!contentDiv) return;
+  
+  const data = financialsCache[ticker];
+  if (!data || data.error) {
+    contentDiv.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--red);font-size:13px">${data?.error || 'No data'}</div>`;
+    return;
+  }
+  
+  const series = data[financialsPeriod];
+  if (!series || !series.length) {
+    contentDiv.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--dim);font-size:13px">No ${financialsPeriod} data available for ${ticker}</div>`;
+    return;
+  }
+  
+  const sorted = [...series].sort((a, b) => a.date.localeCompare(b.date));
+  const latest = sorted[sorted.length - 1];
+  const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+  const earliest = sorted[0];
+  
+  const revGrowth = calcGrowth(latest.revenue, previous ? previous.revenue : null);
+  const profGrowth = calcGrowth(latest.netIncome, previous ? previous.netIncome : null);
+  
+  contentDiv.innerHTML = `
+    <div class="fin-header-row">
+      <div class="fin-title">FINANCIAL PERFORMANCE</div>
+      <div style="font-size:12px;color:var(--muted);font-weight:600">${ticker}</div>
+    </div>
+    
+    <div class="fin-controls-row">
+      <div class="fin-toggle">
+        <button class="fin-toggle-btn ${financialsPeriod === 'quarterly' ? 'active' : ''}" onclick="setFinancialsPeriod('quarterly')">Quarterly</button>
+        <button class="fin-toggle-btn ${financialsPeriod === 'annual' ? 'active' : ''}" onclick="setFinancialsPeriod('annual')">Yearly</button>
+      </div>
+      <span class="fin-all-link" onclick="toggleFinancialsTable()">
+        ${financialsShowAllRows ? 'Hide Financials ←' : 'All Financials →'}
+      </span>
+    </div>
+    
+    <div class="fin-chart-container">
+      <div class="fin-callout" id="fin-callout"></div>
+      <canvas id="fin-canvas" class="fin-chart-canvas"></canvas>
+    </div>
+    
+    <div class="fin-growth-grid">
+      <div class="fin-growth-card">
+        <div class="fin-growth-title">Revenue Growth</div>
+        <div class="fin-growth-row">
+          <span class="fin-growth-label">1Y (TTM)</span>
+          <span class="fin-growth-val ${revGrowth > 0 ? 'pos' : (revGrowth < 0 ? 'neg' : '')}">${revGrowth !== null ? (revGrowth>0?'+':'')+revGrowth.toFixed(2)+'%' : '--'}</span>
+        </div>
+        <div class="fin-growth-row">
+          <span class="fin-growth-label">${sorted.length-1}Y CAGR</span>
+          <span class="fin-growth-val" id="fin-rev-cagr">--</span>
+        </div>
+      </div>
+      <div class="fin-growth-card">
+        <div class="fin-growth-title">Profit Growth</div>
+        <div class="fin-growth-row">
+          <span class="fin-growth-label">1Y (TTM)</span>
+          <span class="fin-growth-val ${profGrowth > 0 ? 'pos' : (profGrowth < 0 ? 'neg' : '')}">${profGrowth !== null ? (profGrowth>0?'+':'')+profGrowth.toFixed(2)+'%' : '--'}</span>
+        </div>
+        <div class="fin-growth-row">
+          <span class="fin-growth-label">${sorted.length-1}Y CAGR</span>
+          <span class="fin-growth-val" id="fin-prof-cagr">--</span>
+        </div>
+      </div>
+    </div>
+    
+    <div class="fin-table-container ${financialsShowAllRows ? 'expanded' : ''}">
+      <table class="fin-table">
+        <thead>
+          <tr id="fin-table-head">
+            <th>PARTICULARS</th>
+          </tr>
+        </thead>
+        <tbody id="fin-table-body">
+        </tbody>
+      </table>
+    </div>
+  `;
+  
+  if (sorted.length > 1) {
+    const revCagr = calcCAGR(latest.revenue, earliest.revenue, sorted.length - 1);
+    const profCagr = calcCAGR(latest.netIncome, earliest.netIncome, sorted.length - 1);
+    const rcEl = document.getElementById('fin-rev-cagr');
+    if (rcEl && revCagr !== null) { rcEl.innerText = (revCagr>0?'+':'')+revCagr.toFixed(2)+'%'; rcEl.className = 'fin-growth-val '+(revCagr>0?'pos':(revCagr<0?'neg':'')); }
+    const pcEl = document.getElementById('fin-prof-cagr');
+    if (pcEl && profCagr !== null) { pcEl.innerText = (profCagr>0?'+':'')+profCagr.toFixed(2)+'%'; pcEl.className = 'fin-growth-val '+(profCagr>0?'pos':(profCagr<0?'neg':'')); }
+  }
+  
+  const thead = document.getElementById('fin-table-head');
+  const tbody = document.getElementById('fin-table-body');
+  if (thead && tbody) {
+    sorted.forEach(s => {
+      const th = document.createElement('th');
+      th.innerText = financialsPeriod === 'annual' ? s.date.substring(0, 4) : s.date.substring(0, 7);
+      thead.appendChild(th);
+    });
+    const rows = [
+      { key: 'revenue', label: 'Revenue' },
+      { key: 'totalExpenses', label: 'Expenses' },
+      { key: 'ebitda', label: 'EBITDA' },
+      { key: 'operatingIncome', label: 'Op. Profit' },
+      { key: 'pretaxIncome', label: 'Pre-tax' },
+      { key: 'netIncome', label: 'Net Profit' },
+      { key: 'eps', label: 'EPS', format: 'num' }
+    ];
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const tdLabel = document.createElement('td');
+      tdLabel.innerText = r.label;
+      tr.appendChild(tdLabel);
+      sorted.forEach(s => {
+        const td = document.createElement('td');
+        const val = s[r.key];
+        td.innerText = val === null || val === undefined || val === 0 ? '--' : (r.format === 'num' ? val.toFixed(2) : formatFinNum(val));
+        if (val < 0) td.classList.add('neg');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+  
+  drawFinancialsChart('fin-canvas', sorted);
+  updateFinancialsCallout(sorted, sorted.length - 1);
+}
+
+function updateFinancialsCallout(sorted, index) {
+  const el = document.getElementById('fin-callout');
+  if (!el || !sorted[index]) return;
+  const current = sorted[index];
+  const prev = index > 0 ? sorted[index - 1] : null;
+  
+  const rChg = calcGrowth(current.revenue, prev ? prev.revenue : null);
+  const pChg = calcGrowth(current.netIncome, prev ? prev.netIncome : null);
+  
+  el.innerHTML = `
+    <div class="fin-callout-year">${financialsPeriod === 'annual' ? current.date.substring(0, 4) : current.date.substring(0, 7)}</div>
+    <div class="fin-callout-metrics">
+      <div class="fin-callout-metric-group">
+        <div class="fin-callout-label rev-lbl">REVENUE</div>
+        <div class="fin-callout-value-row">
+          <div class="fin-callout-val">${formatFinNum(current.revenue)}</div>
+          ${rChg !== null ? `<div class="fin-callout-chg ${rChg>0?'pos':(rChg<0?'neg':'')}">${rChg>0?'+':''}${rChg.toFixed(1)}%</div>` : ''}
+        </div>
+      </div>
+      <div class="fin-callout-metric-group">
+        <div class="fin-callout-label prof-lbl">PROFIT</div>
+        <div class="fin-callout-value-row">
+          <div class="fin-callout-val">${formatFinNum(current.netIncome)}</div>
+          ${pChg !== null ? `<div class="fin-callout-chg ${pChg>0?'pos':(pChg<0?'neg':'')}">${pChg>0?'+':''}${pChg.toFixed(1)}%</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function drawFinancialsChart(canvasId, sorted) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  
+  const p = canvas.parentNode;
+  const w = p.clientWidth - 32;
+  const h = 200;
+  
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  
+  if (!sorted.length) return;
+  
+  const padBottom = 20;
+  const padTop = 10;
+  const padLeft = 10;
+  const chartW = w - padLeft;
+  const chartH = h - padBottom - padTop;
+  
+  let maxVal = -Infinity;
+  let minVal = Infinity;
+  sorted.forEach(s => {
+    maxVal = Math.max(maxVal, s.revenue || 0, s.netIncome || 0);
+    minVal = Math.min(minVal, s.revenue || 0, s.netIncome || 0, 0);
+  });
+  
+  if (maxVal === minVal) maxVal = minVal + 1;
+  const range = maxVal - minVal;
+  const zeroY = padTop + chartH - ((0 - minVal) / range) * chartH;
+  
+  ctx.beginPath();
+  ctx.moveTo(padLeft, zeroY);
+  ctx.lineTo(w, zeroY);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  
+  const n = sorted.length;
+  const groupW = chartW / n;
+  const barW = Math.min(groupW * 0.35, 30);
+  const gap = 2;
+  
+  const barBounds = [];
+  
+  sorted.forEach((s, i) => {
+    const cx = padLeft + (i + 0.5) * groupW;
+    
+    // Revenue bar
+    const rY = padTop + chartH - ((s.revenue - minVal) / range) * chartH;
+    const rH = Math.abs(zeroY - rY);
+    const rRealY = s.revenue >= 0 ? rY : zeroY;
+    
+    ctx.fillStyle = 'rgba(120, 130, 150, 0.6)';
+    ctx.fillRect(cx - barW - gap/2, rRealY, barW, rH);
+    
+    // Profit bar
+    const pY = padTop + chartH - ((s.netIncome - minVal) / range) * chartH;
+    const pH = Math.abs(zeroY - pY);
+    const pRealY = s.netIncome >= 0 ? pY : zeroY;
+    
+    ctx.fillStyle = s.netIncome >= 0 ? 'rgba(0, 201, 138, 0.7)' : 'rgba(228, 84, 84, 0.7)';
+    ctx.fillRect(cx + gap/2, pRealY, barW, pH);
+    
+    const hoverW = groupW * 0.8;
+    barBounds.push({ idx: i, x: cx - hoverW/2, y: 0, w: hoverW, h: h });
+    
+    ctx.fillStyle = '#888880';
+    ctx.font = '10px "IBM Plex Mono"';
+    ctx.textAlign = 'center';
+    ctx.fillText(financialsPeriod === 'annual' ? s.date.substring(0,4) : s.date.substring(5,10), cx, h - 2);
+  });
+  
+  function handleMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    let hoveredIdx = -1;
+    for (let b of barBounds) {
+      if (x >= b.x && x <= b.x + b.w) {
+        hoveredIdx = b.idx;
+        break;
+      }
+    }
+    
+    if (hoveredIdx !== -1 && currentFinancialsHoverPeriod !== hoveredIdx) {
+      currentFinancialsHoverPeriod = hoveredIdx;
+      updateFinancialsCallout(sorted, hoveredIdx);
+    } else if (hoveredIdx === -1 && currentFinancialsHoverPeriod !== null) {
+      currentFinancialsHoverPeriod = null;
+      updateFinancialsCallout(sorted, sorted.length - 1);
+    }
+  }
+  
+  canvas.onmousemove = handleMove;
+  canvas.onmouseleave = () => {
+    currentFinancialsHoverPeriod = null;
+    updateFinancialsCallout(sorted, sorted.length - 1);
+  };
+  canvas.ontouchstart = (e) => handleMove(e.touches[0]);
+  canvas.ontouchmove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const y = e.touches[0].clientY - rect.top;
+    // Only prevent default if we're swiping across the chart horizontally, to still allow vertical page scroll if needed
+    // But for simplicity, we prevent default to make hover smooth
+    e.preventDefault(); 
+    handleMove(e.touches[0]); 
+  };
+}
+
+function setFinancialsPeriod(period) {
+  financialsPeriod = period;
+  const activeTicker = currentTicker || (appState.selectedStock ? appState.selectedStock.split(':')[0] : null);
+  if (activeTicker) renderFinancials(activeTicker);
+}
+
+function toggleFinancialsTable() {
+  financialsShowAllRows = !financialsShowAllRows;
+  const container = document.querySelector('.fin-table-container');
+  const link = document.querySelector('.fin-all-link');
+  if (container) container.classList.toggle('expanded', financialsShowAllRows);
+  if (link) link.innerText = financialsShowAllRows ? 'Hide Financials ←' : 'All Financials →';
+}

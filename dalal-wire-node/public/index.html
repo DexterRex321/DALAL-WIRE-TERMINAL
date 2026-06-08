@@ -157,6 +157,7 @@
           <span class="rp-tab"               data-rp="sop"         onclick="switchRP('sop')">MY BRIEF</span>
           <span class="rp-tab"               data-rp="advice"      onclick="switchRP('advice')">ADVICE</span>
           <span class="rp-tab"               data-rp="compare"     onclick="switchRP('compare')">COMPARE</span>
+          <span class="rp-tab"               data-rp="financials"  onclick="switchRP('financials')">FINANCIALS</span>
           <span class="rp-tab"               data-rp="feargreed"   onclick="switchRP('feargreed')">SENTIMENT</span>
           <!-- Separator -->
           <span class="rp-tab-sep"></span>
@@ -388,6 +389,14 @@
             </div>
             <div id="compare-meta"></div>
             <div id="compare-table"></div>
+          </div>
+
+          <div id="rp-financials" style="display:none;overflow-y:auto;flex:1;padding:16px 18px">
+            <div id="financials-content">
+              <div style="padding:20px;text-align:center;color:var(--dim);font-size:13px">
+                Enter a stock ticker above to view financial performance
+              </div>
+            </div>
           </div>
 
           <div id="rp-events">
