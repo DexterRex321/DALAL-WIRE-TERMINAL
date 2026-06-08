@@ -2390,6 +2390,12 @@ const RSS_SOURCES = [
   // Global
   { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(wall street OR nasdaq OR dow jones OR crude oil OR federal reserve) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['global'] },
   
+  // Geopolitics (Added to Global)
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(Russia OR Ukraine OR Iran OR Israel OR war OR geopolitical) AND (oil OR gold OR market OR economy) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['global'] },
+  
+  // Commodities (Added to Macro)
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(gold all time high OR crude oil price OR commodity OR silver OR brent) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['macro'] },
+  
   // High-Quality Global Fallbacks
   { name: 'Reuters Business',  url: 'https://feeds.reuters.com/reuters/businessNews',                      cat: ['global', 'macro'] },
   { name: 'Reuters Markets',   url: 'https://feeds.reuters.com/reuters/financialNews',                     cat: ['global', 'market'] },
@@ -2400,9 +2406,9 @@ const CAT_KEYWORDS = {
   market:  ['nifty', 'sensex', 'bse', 'nse', 'dalal', 'india market', 'stock market', 'indices', 'fii', 'dii', 'vix'],
   banks:   ['bank', 'rbi', 'hdfc', 'icici', 'sbi', 'kotak', 'axis', 'pnb', 'canara', 'interest rate', 'repo', 'nbfc', 'credit', 'npa'],
   sectors: ['it sector', 'pharma', 'auto', 'fmcg', 'metal', 'realty', 'energy', 'infra', 'telecom', 'defence', 'consumer', 'cement', 'steel'],
-  macro:   ['inflation', 'cpi', 'gdp', 'economy', 'fiscal', 'rupee', 'dollar', 'fed', 'rbi policy', 'budget', 'trade deficit', 'crude'],
+  macro:   ['inflation', 'cpi', 'gdp', 'economy', 'fiscal', 'rupee', 'dollar', 'fed', 'rbi policy', 'budget', 'trade deficit', 'crude', 'gold', 'silver', 'brent', 'commodity', 'opec', 'all time high', 'bullion'],
   stocks:  ['earnings', 'results', 'profit', 'revenue', 'q4', 'q3', 'quarterly', 'dividend', 'buyback', 'ipo', 'merger', 'acquisition', 'target price'],
-  global:  ['wall street', 'nasdaq', 'dow jones', 's&p', 'ftse', 'nikkei', 'hang seng', 'dax', 'federal reserve', 'ecb', 'china', 'us economy', 'global market'],
+  global:  ['wall street', 'nasdaq', 'dow jones', 's&p', 'ftse', 'nikkei', 'hang seng', 'dax', 'federal reserve', 'ecb', 'china', 'us economy', 'global market', 'russia', 'ukraine', 'iran', 'israel', 'war', 'geopolitical', 'conflict', 'sanctions', 'middle east', 'missile', 'military'],
 };
 
 function sentimentFromText(text) {
@@ -2591,7 +2597,14 @@ const ENTITY_MAP = {
   'silver': { symbol: 'SILVER:MACRO', label: 'Silver', sector: 'Macro', type: 'macro' },
   'us 10y': { symbol: 'US10Y:MACRO', label: 'US 10Y Yield', sector: 'Macro', type: 'macro' },
   'g-sec': { symbol: 'GSEC:MACRO', label: 'G-Sec', sector: 'Macro', type: 'macro' },
-  'gsec': { symbol: 'GSEC:MACRO', label: 'G-Sec', sector: 'Macro', type: 'macro' }
+  'gsec': { symbol: 'GSEC:MACRO', label: 'G-Sec', sector: 'Macro', type: 'macro' },
+  'war': { symbol: 'WAR:GEO', label: 'War', sector: 'Geopolitics', type: 'geo' },
+  'russia': { symbol: 'RUSSIA:GEO', label: 'Russia', sector: 'Geopolitics', type: 'geo' },
+  'iran': { symbol: 'IRAN:GEO', label: 'Iran', sector: 'Geopolitics', type: 'geo' },
+  'israel': { symbol: 'ISRAEL:GEO', label: 'Israel', sector: 'Geopolitics', type: 'geo' },
+  'middle east': { symbol: 'MIDEAST:GEO', label: 'Middle East', sector: 'Geopolitics', type: 'geo' },
+  'geopolitical': { symbol: 'GEO:GEO', label: 'Geopolitics', sector: 'Geopolitics', type: 'geo' },
+  'all time high': { symbol: 'ATH:MACRO', label: 'All Time High', sector: 'Macro', type: 'macro' }
 };
 
 const NIFTY_TOP20 = ['HDFCBANK:NSE', 'RELIANCE:NSE', 'ICICIBANK:NSE', 'INFY:NSE', 'TCS:NSE', 'SBIN:NSE', 'BHARTIARTL:NSE', 'LT:NSE', 'AXISBANK:NSE', 'KOTAKBANK:NSE', 'ITC:NSE', 'HINDUNILVR:NSE', 'BAJFINANCE:NSE', 'MARUTI:NSE', 'SUNPHARMA:NSE', 'ASIANPAINT:NSE', 'TITAN:NSE', 'ADANIENT:NSE', 'TATAMOTORS:NSE', 'TATASTEEL:NSE'];
