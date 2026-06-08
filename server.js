@@ -2371,37 +2371,29 @@ app.get('/api/mfapi/:code', async (req, res) => {
 });
 
 // ── NEWS (RSS + optional Newsdata.io) ─────────────────────────
+const PREMIUM_SITES = encodeURIComponent('(site:economictimes.indiatimes.com OR site:moneycontrol.com OR site:livemint.com OR site:business-standard.com OR site:bloomberg.com OR site:reuters.com OR site:cnbctv18.com)');
+
 const RSS_SOURCES = [
-  { name: 'Economic Times',    url: 'https://economictimes.indiatimes.com/markets/rss.cms',                 cat: ['market', 'stocks', 'macro'] },
-  { name: 'Economic Times',    url: 'https://economictimes.indiatimes.com/markets/stocks/rss.cms',          cat: ['stocks'] },
-  { name: 'Moneycontrol',      url: 'https://www.moneycontrol.com/rss/latestnews.xml',                      cat: ['market', 'stocks', 'banks', 'sectors'] },
-  { name: 'Moneycontrol',      url: 'https://www.moneycontrol.com/rss/marketreports.xml',                   cat: ['market'] },
-  { name: 'Moneycontrol',      url: 'https://www.moneycontrol.com/rss/banking.xml',                         cat: ['banks'] },
-  { name: 'LiveMint',          url: 'https://www.livemint.com/rss/markets',                                 cat: ['market', 'stocks'] },
-  { name: 'LiveMint',          url: 'https://www.livemint.com/rss/economy',                                 cat: ['macro'] },
-  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss',                cat: ['market', 'stocks'] },
-  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/economy-policy-102.rss',        cat: ['macro'] },
-  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/banking-104.rss',               cat: ['banks'] },
-  { name: 'CNBC TV18',         url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/markets.xml',          cat: ['market', 'stocks'] },
-  { name: 'CNBC TV18',         url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/economy.xml',          cat: ['macro'] },
-  { name: 'Financial Express', url: 'https://www.financialexpress.com/market/feed/',                       cat: ['market', 'stocks'] },
+  // Market & Stocks (Breaking News)
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(Nifty OR Sensex OR Dalal Street OR BSE OR NSE) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['market'] },
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(Q1 OR Q2 OR Q3 OR Q4 OR earnings OR net profit OR dividend OR stock) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['stocks'] },
+  
+  // Banks
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(bank OR RBI OR HDFC OR ICICI OR SBI OR Kotak OR Axis) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['banks'] },
+  
+  // Sectors
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(IT sector OR pharma OR auto OR FMCG OR telecom) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['sectors'] },
+
+  // Macro
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(inflation OR GDP OR economy OR rupee OR fed rate OR RBI policy) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['macro'] },
+
+  // Global
+  { name: 'Google News', url: `https://news.google.com/rss/search?q=${encodeURIComponent('(wall street OR nasdaq OR dow jones OR crude oil OR federal reserve) AND ')}` + PREMIUM_SITES + encodeURIComponent(' when:1d') + `&hl=en-IN&gl=IN&ceid=IN:en`, cat: ['global'] },
+  
+  // High-Quality Global Fallbacks
   { name: 'Reuters Business',  url: 'https://feeds.reuters.com/reuters/businessNews',                      cat: ['global', 'macro'] },
   { name: 'Reuters Markets',   url: 'https://feeds.reuters.com/reuters/financialNews',                     cat: ['global', 'market'] },
   { name: 'Yahoo Finance',     url: 'https://finance.yahoo.com/news/rssindex',                             cat: ['global', 'stocks'] },
-  { name: 'ET Tech',           url: 'https://economictimes.indiatimes.com/tech/rss.cms',                   cat: ['sectors'] },
-  { name: 'ET Auto',           url: 'https://auto.economictimes.indiatimes.com/rss.cms',                   cat: ['sectors'] },
-  { name: 'MC IT',             url: 'https://www.moneycontrol.com/rss/ittelecomsoftware.xml',              cat: ['sectors'] },
-  { name: 'MC Pharma',         url: 'https://www.moneycontrol.com/rss/pharma.xml',                         cat: ['sectors'] },
-  { name: 'MC Auto',           url: 'https://www.moneycontrol.com/rss/automobile.xml',                     cat: ['sectors'] },
-  { name: 'Zee Business',      url: 'https://zeenews.india.com/rss/business.xml',                          cat: ['market', 'stocks'] },
-  { name: 'NDTV Profit',       url: 'https://feeds.feedburner.com/ndtvprofit-latest',                      cat: ['market', 'stocks'] },
-  { name: 'Hindu BizLine',     url: 'https://www.thehindubusinessline.com/markets/stocks/?service=rss',    cat: ['stocks'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=nifty+sensex+india+stock+market&hl=en-IN&gl=IN&ceid=IN:en', cat: ['market'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=RBI+bank+nifty+HDFC+ICICI+SBI&hl=en-IN&gl=IN&ceid=IN:en', cat: ['banks'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=nifty+IT+auto+pharma+sector&hl=en-IN&gl=IN&ceid=IN:en', cat: ['sectors'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=india+inflation+rupee+dollar+FII+DII&hl=en-IN&gl=IN&ceid=IN:en', cat: ['macro'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=india+quarterly+results+earnings+dividend&hl=en-IN&gl=IN&ceid=IN:en', cat: ['stocks'] },
-  { name: 'Google News', url: 'https://news.google.com/rss/search?q=fed+rate+nasdaq+crude+oil+india&hl=en-IN&gl=IN&ceid=IN:en', cat: ['global'] },
 ];
 
 const CAT_KEYWORDS = {
@@ -2661,8 +2653,14 @@ async function fetchCategoryNews(cat) {
     if (hasTopStock) scoreAdd += 2;
     if (hasMacro) scoreAdd += 1;
     if (hasStock && hasMacro) scoreAdd += 2;
-    if (ageHours > 8) scoreAdd -= 2;
-    else if (ageHours > 4) scoreAdd -= 1;
+    
+    // Extreme boost for breaking news (under 2 hours old)
+    if (ageHours < 2) scoreAdd += 5; 
+    else if (ageHours < 4) scoreAdd += 3;
+    
+    // Penalize old news to sink it
+    if (ageHours > 12) scoreAdd -= 3;
+    else if (ageHours > 8) scoreAdd -= 1;
     
     return {
       ...item,
@@ -2676,8 +2674,8 @@ async function fetchCategoryNews(cat) {
     };
   });
 
-  // Age filter: drop items older than 72h. Keep all if <5 fresh (weekend gap).
-  const _maxNewsAge = 72 * 60 * 60 * 1000;
+  // Age filter: drop items older than 24h. Keep all if <5 fresh (weekend gap).
+  const _maxNewsAge = 24 * 60 * 60 * 1000;
   const _freshItems = processed.filter(item =>
     item.parsedTs === 0 || (Date.now() - item.parsedTs) < _maxNewsAge
   );
